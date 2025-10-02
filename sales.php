@@ -1,156 +1,373 @@
 <?php
-include 'env/db.php';
+require_once __DIR__ . '/env/bootstrap.php';
 
-// Handle creating new sale
-if (isset($_POST['create_sale'])) {
-    $customer_id = $_POST['customer_id'];
-    $sale_date = $_POST['sale_date'];
-    $payment_method = $_POST['payment_method'];
-    $status = $_POST['status'];
+function handle_create_sale(mysqli $conn): void
+{
+    $transactionStarted = false;
 
-    // Validate sale items quantities
-    $valid_items = [];
-    if (isset($_POST['items']) && is_array($_POST['items'])) {
-        foreach ($_POST['items'] as $item) {
-            $quantity = intval($item['quantity']);
-            if ($quantity <= 0) {
-                // Skip invalid items or handle error
-                continue; // Skip negative or zero quantities
-            }
-            $valid_items[] = [
-                'variant_id' => $item['variant_id'],
-                'quantity' => $quantity,
-                'sell_price' => $item['sell_price']
-            ];
+    try {
+        $conn->begin_transaction();
+        $transactionStarted = true;
+
+        $customer_id = validate_int($_POST['customer_id'] ?? 0, 0);
+        $sale_date = validate_date((string)($_POST['sale_date'] ?? ''));
+        $payment_method = validate_enum((string)($_POST['payment_method'] ?? ''), ['cash', 'credit_card', 'bank_transfer']);
+        $status = validate_enum((string)($_POST['status'] ?? 'pending'), ['pending', 'paid']);
+
+        $raw_items = $_POST['items'] ?? [];
+        if (!is_array($raw_items) || $raw_items === []) {
+            throw new InvalidArgumentException('برای ثبت فروش حداقل یک آیتم لازم است.');
         }
+
+        $items = [];
+        foreach ($raw_items as $item) {
+            $variant_id = validate_int($item['variant_id'] ?? null, 1);
+            $quantity = validate_int($item['quantity'] ?? null, 1);
+            $items[] = ['variant_id' => $variant_id, 'quantity' => $quantity];
+        }
+
+        $insertSaleStmt = $conn->prepare('INSERT INTO Sales (customer_id, sale_date, payment_method, status) VALUES (?, ?, ?, ?)');
+        $insertSaleStmt->bind_param('isss', $customer_id, $sale_date, $payment_method, $status);
+        $insertSaleStmt->execute();
+        $sale_id = (int) $conn->insert_id;
+
+        $variantStmt = $conn->prepare('SELECT price, stock FROM Product_Variants WHERE variant_id = ? FOR UPDATE');
+        $insertItemStmt = $conn->prepare('INSERT INTO Sale_Items (sale_id, variant_id, quantity, sell_price) VALUES (?, ?, ?, ?)');
+        $updateStockStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock - ? WHERE variant_id = ?');
+
+        foreach ($items as $item) {
+            $variant_id = $item['variant_id'];
+            $quantity = $item['quantity'];
+
+            $variantStmt->bind_param('i', $variant_id);
+            $variantStmt->execute();
+            $variantResult = $variantStmt->get_result();
+            $variant = $variantResult->fetch_assoc();
+
+            if (!$variant) {
+                throw new RuntimeException('تنوع انتخاب‌شده یافت نشد.');
+            }
+
+            if ((int) $variant['stock'] < $quantity) {
+                throw new RuntimeException('موجودی کافی برای برخی آیتم‌ها وجود ندارد.');
+            }
+
+            $price = (float) $variant['price'];
+
+            $insertItemStmt->bind_param('iiid', $sale_id, $variant_id, $quantity, $price);
+            $insertItemStmt->execute();
+
+            $updateStockStmt->bind_param('ii', $quantity, $variant_id);
+            $updateStockStmt->execute();
+        }
+
+        $conn->commit();
+        redirect_with_message('sales.php', 'success', 'فروش جدید با موفقیت ثبت شد.');
+    } catch (Throwable $e) {
+        if ($transactionStarted) {
+            $conn->rollback();
+        }
+
+        redirect_with_message('sales.php', 'error', normalize_error_message($e));
     }
-
-    // Only proceed if there are valid items
-    if (empty($valid_items)) {
-        // Redirect with error or handle
-        header('Location: sales.php?error=no_valid_items');
-        exit();
-    }
-
-    // Insert sale
-    $conn->query("INSERT INTO Sales (customer_id, sale_date, payment_method, status) VALUES ($customer_id, '$sale_date', '$payment_method', '$status')");
-    $sale_id = $conn->insert_id;
-
-    // Insert sale items and update stock
-    foreach ($valid_items as $item) {
-        $variant_id = $item['variant_id'];
-        $quantity = $item['quantity'];
-        $sell_price = $item['sell_price'];
-
-        // Insert sale item
-        $conn->query("INSERT INTO Sale_Items (sale_id, variant_id, quantity, sell_price) VALUES ($sale_id, $variant_id, $quantity, $sell_price)");
-
-        // Update stock
-        $conn->query("UPDATE Product_Variants SET stock = stock - $quantity WHERE variant_id = $variant_id");
-    }
-
-    header('Location: sales.php');
-    exit();
 }
 
-// Handle adding sale item
-if (isset($_POST['add_sale_item'])) {
-    $sale_id = $_POST['sale_id'];
-    $variant_id = $_POST['variant_id'];
-    $quantity = intval($_POST['quantity']);
-    $sell_price = $_POST['sell_price'];
+function handle_add_sale_item(mysqli $conn): void
+{
+    $transactionStarted = false;
 
-    if ($quantity <= 0) {
-        header('Location: sales.php?error=invalid_quantity');
-        exit();
+    try {
+        $conn->begin_transaction();
+        $transactionStarted = true;
+
+        $sale_id = validate_int($_POST['sale_id'] ?? null, 1);
+        $variant_id = validate_int($_POST['variant_id'] ?? null, 1);
+        $quantity = validate_int($_POST['quantity'] ?? null, 1);
+
+        $saleCheckStmt = $conn->prepare('SELECT sale_id FROM Sales WHERE sale_id = ? FOR UPDATE');
+        $saleCheckStmt->bind_param('i', $sale_id);
+        $saleCheckStmt->execute();
+        $saleExists = $saleCheckStmt->get_result()->fetch_assoc();
+        if (!$saleExists) {
+            throw new RuntimeException('فروش انتخاب‌شده وجود ندارد.');
+        }
+
+        $variantStmt = $conn->prepare('SELECT price, stock FROM Product_Variants WHERE variant_id = ? FOR UPDATE');
+        $variantStmt->bind_param('i', $variant_id);
+        $variantStmt->execute();
+        $variant = $variantStmt->get_result()->fetch_assoc();
+        if (!$variant) {
+            throw new RuntimeException('تنوع انتخاب‌شده یافت نشد.');
+        }
+
+        if ((int) $variant['stock'] < $quantity) {
+            throw new RuntimeException('موجودی کافی برای افزودن این آیتم وجود ندارد.');
+        }
+
+        $price = (float) $variant['price'];
+
+        $insertItemStmt = $conn->prepare('INSERT INTO Sale_Items (sale_id, variant_id, quantity, sell_price) VALUES (?, ?, ?, ?)');
+        $insertItemStmt->bind_param('iiid', $sale_id, $variant_id, $quantity, $price);
+        $insertItemStmt->execute();
+
+        $updateStockStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock - ? WHERE variant_id = ?');
+        $updateStockStmt->bind_param('ii', $quantity, $variant_id);
+        $updateStockStmt->execute();
+
+        $conn->commit();
+        redirect_with_message('sales.php', 'success', 'آیتم جدید با موفقیت به فروش اضافه شد.');
+    } catch (Throwable $e) {
+        if ($transactionStarted) {
+            $conn->rollback();
+        }
+
+        redirect_with_message('sales.php', 'error', normalize_error_message($e));
+    }
+}
+
+function handle_edit_sale(mysqli $conn): void
+{
+    try {
+        $sale_id = validate_int($_POST['sale_id'] ?? null, 1);
+        $customer_id = validate_int($_POST['customer_id'] ?? 0, 0);
+        $sale_date = validate_date((string)($_POST['sale_date'] ?? ''));
+        $payment_method = validate_enum((string)($_POST['payment_method'] ?? ''), ['cash', 'credit_card', 'bank_transfer']);
+        $status = validate_enum((string)($_POST['status'] ?? 'pending'), ['pending', 'paid']);
+
+        $updateStmt = $conn->prepare('UPDATE Sales SET customer_id = ?, sale_date = ?, payment_method = ?, status = ? WHERE sale_id = ?');
+        $updateStmt->bind_param('isssi', $customer_id, $sale_date, $payment_method, $status, $sale_id);
+        $updateStmt->execute();
+
+        redirect_with_message('sales.php', 'success', 'اطلاعات فروش با موفقیت به‌روزرسانی شد.');
+    } catch (Throwable $e) {
+        redirect_with_message('sales.php', 'error', normalize_error_message($e));
+    }
+}
+
+function handle_edit_sale_item(mysqli $conn): void
+{
+    $transactionStarted = false;
+
+    try {
+        $conn->begin_transaction();
+        $transactionStarted = true;
+
+        $sale_item_id = validate_int($_POST['sale_item_id'] ?? null, 1);
+        $new_variant_id = validate_int($_POST['variant_id'] ?? null, 1);
+        $new_quantity = validate_int($_POST['quantity'] ?? null, 1);
+
+        $currentItemStmt = $conn->prepare('SELECT variant_id, quantity FROM Sale_Items WHERE sale_item_id = ? FOR UPDATE');
+        $currentItemStmt->bind_param('i', $sale_item_id);
+        $currentItemStmt->execute();
+        $currentItem = $currentItemStmt->get_result()->fetch_assoc();
+
+        if (!$currentItem) {
+            throw new RuntimeException('آیتم فروش یافت نشد.');
+        }
+
+        $old_variant_id = (int) $currentItem['variant_id'];
+        $old_quantity = (int) $currentItem['quantity'];
+
+        $variantStmt = $conn->prepare('SELECT price, stock FROM Product_Variants WHERE variant_id = ? FOR UPDATE');
+        $variantStmt->bind_param('i', $new_variant_id);
+        $variantStmt->execute();
+        $newVariant = $variantStmt->get_result()->fetch_assoc();
+        if (!$newVariant) {
+            throw new RuntimeException('تنوع انتخاب‌شده یافت نشد.');
+        }
+
+        $price = (float) $newVariant['price'];
+
+        if ($old_variant_id === $new_variant_id) {
+            $difference = $new_quantity - $old_quantity;
+
+            if ($difference > 0 && (int) $newVariant['stock'] < $difference) {
+                throw new RuntimeException('موجودی کافی برای افزایش تعداد وجود ندارد.');
+            }
+
+            $updateItemStmt = $conn->prepare('UPDATE Sale_Items SET quantity = ?, sell_price = ? WHERE sale_item_id = ?');
+            $updateItemStmt->bind_param('idi', $new_quantity, $price, $sale_item_id);
+            $updateItemStmt->execute();
+
+            if ($difference !== 0) {
+                if ($difference > 0) {
+                    $decreaseStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock - ? WHERE variant_id = ?');
+                    $decreaseStmt->bind_param('ii', $difference, $new_variant_id);
+                    $decreaseStmt->execute();
+                } else {
+                    $increase = abs($difference);
+                    $increaseStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?');
+                    $increaseStmt->bind_param('ii', $increase, $new_variant_id);
+                    $increaseStmt->execute();
+                }
+            }
+        } else {
+            $oldVariantStmt = $conn->prepare('SELECT variant_id FROM Product_Variants WHERE variant_id = ? FOR UPDATE');
+            $oldVariantStmt->bind_param('i', $old_variant_id);
+            $oldVariantStmt->execute();
+            $oldVariant = $oldVariantStmt->get_result()->fetch_assoc();
+            if (!$oldVariant) {
+                throw new RuntimeException('تنوع قبلی دیگر وجود ندارد.');
+            }
+
+            if ((int) $newVariant['stock'] < $new_quantity) {
+                throw new RuntimeException('موجودی کافی برای تنوع جدید وجود ندارد.');
+            }
+
+            $updateItemStmt = $conn->prepare('UPDATE Sale_Items SET variant_id = ?, quantity = ?, sell_price = ? WHERE sale_item_id = ?');
+            $updateItemStmt->bind_param('iidi', $new_variant_id, $new_quantity, $price, $sale_item_id);
+            $updateItemStmt->execute();
+
+            $restoreStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?');
+            $restoreStmt->bind_param('ii', $old_quantity, $old_variant_id);
+            $restoreStmt->execute();
+
+            $decreaseStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock - ? WHERE variant_id = ?');
+            $decreaseStmt->bind_param('ii', $new_quantity, $new_variant_id);
+            $decreaseStmt->execute();
+        }
+
+        $conn->commit();
+        redirect_with_message('sales.php', 'success', 'آیتم فروش با موفقیت به‌روزرسانی شد.');
+    } catch (Throwable $e) {
+        if ($transactionStarted) {
+            $conn->rollback();
+        }
+
+        redirect_with_message('sales.php', 'error', normalize_error_message($e));
+    }
+}
+
+function handle_delete_sale(mysqli $conn): void
+{
+    $transactionStarted = false;
+
+    try {
+        $conn->begin_transaction();
+        $transactionStarted = true;
+
+        $sale_id = validate_int($_GET['delete_sale'] ?? null, 1);
+
+        $saleStmt = $conn->prepare('SELECT sale_id FROM Sales WHERE sale_id = ? FOR UPDATE');
+        $saleStmt->bind_param('i', $sale_id);
+        $saleStmt->execute();
+        $saleExists = $saleStmt->get_result()->fetch_assoc();
+        if (!$saleExists) {
+            throw new RuntimeException('فروش موردنظر یافت نشد.');
+        }
+
+        $itemsStmt = $conn->prepare('SELECT variant_id, quantity FROM Sale_Items WHERE sale_id = ? FOR UPDATE');
+        $itemsStmt->bind_param('i', $sale_id);
+        $itemsStmt->execute();
+        $itemsResult = $itemsStmt->get_result();
+
+        $increaseStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?');
+        while ($item = $itemsResult->fetch_assoc()) {
+            $quantity = (int) $item['quantity'];
+            if ($quantity <= 0) {
+                continue;
+            }
+
+            $variant_id = (int) $item['variant_id'];
+            $increaseStmt->bind_param('ii', $quantity, $variant_id);
+            $increaseStmt->execute();
+        }
+
+        $deleteItemsStmt = $conn->prepare('DELETE FROM Sale_Items WHERE sale_id = ?');
+        $deleteItemsStmt->bind_param('i', $sale_id);
+        $deleteItemsStmt->execute();
+
+        $deleteSaleStmt = $conn->prepare('DELETE FROM Sales WHERE sale_id = ?');
+        $deleteSaleStmt->bind_param('i', $sale_id);
+        $deleteSaleStmt->execute();
+
+        $conn->commit();
+        redirect_with_message('sales.php', 'success', 'فروش حذف شد و موجودی به‌روزرسانی گردید.');
+    } catch (Throwable $e) {
+        if ($transactionStarted) {
+            $conn->rollback();
+        }
+
+        redirect_with_message('sales.php', 'error', normalize_error_message($e));
+    }
+}
+
+function handle_delete_sale_item(mysqli $conn): void
+{
+    $transactionStarted = false;
+
+    try {
+        $conn->begin_transaction();
+        $transactionStarted = true;
+
+        $sale_item_id = validate_int($_GET['delete_sale_item'] ?? null, 1);
+
+        $itemStmt = $conn->prepare('SELECT variant_id, quantity FROM Sale_Items WHERE sale_item_id = ? FOR UPDATE');
+        $itemStmt->bind_param('i', $sale_item_id);
+        $itemStmt->execute();
+        $item = $itemStmt->get_result()->fetch_assoc();
+        if (!$item) {
+            throw new RuntimeException('آیتم فروش یافت نشد.');
+        }
+
+        $quantity = (int) $item['quantity'];
+        $variant_id = (int) $item['variant_id'];
+
+        $increaseStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?');
+        $increaseStmt->bind_param('ii', $quantity, $variant_id);
+        $increaseStmt->execute();
+
+        $deleteStmt = $conn->prepare('DELETE FROM Sale_Items WHERE sale_item_id = ?');
+        $deleteStmt->bind_param('i', $sale_item_id);
+        $deleteStmt->execute();
+
+        $conn->commit();
+        redirect_with_message('sales.php', 'success', 'آیتم فروش حذف شد و موجودی بازگردانده شد.');
+    } catch (Throwable $e) {
+        if ($transactionStarted) {
+            $conn->rollback();
+        }
+
+        redirect_with_message('sales.php', 'error', normalize_error_message($e));
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (isset($_POST['create_sale'])) {
+        handle_create_sale($conn);
     }
 
-    $conn->query("INSERT INTO Sale_Items (sale_id, variant_id, quantity, sell_price) VALUES ($sale_id, $variant_id, $quantity, $sell_price)");
-    // Update stock
-    $conn->query("UPDATE Product_Variants SET stock = stock - $quantity WHERE variant_id = $variant_id");
-    header('Location: sales.php');
-    exit();
-}
-
-// Handle editing sale
-if (isset($_POST['edit_sale'])) {
-    $sale_id = $_POST['sale_id'];
-    $customer_id = $_POST['customer_id'];
-    $sale_date = $_POST['sale_date'];
-    $payment_method = $_POST['payment_method'];
-    $status = $_POST['status'];
-    $conn->query("UPDATE Sales SET customer_id=$customer_id, sale_date='$sale_date', payment_method='$payment_method', status='$status' WHERE sale_id=$sale_id");
-    header('Location: sales.php');
-    exit();
-}
-
-// Handle editing sale item
-if (isset($_POST['edit_sale_item'])) {
-    $sale_item_id = $_POST['sale_item_id'];
-    $variant_id = $_POST['variant_id'];
-    $quantity = intval($_POST['quantity']);
-    $sell_price = $_POST['sell_price'];
-
-    if ($quantity <= 0) {
-        header('Location: sales.php?error=invalid_quantity');
-        exit();
+    if (isset($_POST['add_sale_item'])) {
+        handle_add_sale_item($conn);
     }
 
-    // Get old quantity to adjust stock
-    $old_item = $conn->query("SELECT variant_id, quantity FROM Sale_Items WHERE sale_item_id=$sale_item_id")->fetch_assoc();
-    $old_variant_id = $old_item['variant_id'];
-    $old_quantity = $old_item['quantity'];
-
-    // Restore old stock
-    $conn->query("UPDATE Product_Variants SET stock = stock + $old_quantity WHERE variant_id = $old_variant_id");
-
-    // Update sale item
-    $conn->query("UPDATE Sale_Items SET variant_id=$variant_id, quantity=$quantity, sell_price=$sell_price WHERE sale_item_id=$sale_item_id");
-
-    // Update new stock
-    $conn->query("UPDATE Product_Variants SET stock = stock - $quantity WHERE variant_id = $variant_id");
-
-    header('Location: sales.php');
-    exit();
-}
-
-// Handle deleting sale
-if (isset($_GET['delete_sale'])) {
-    $sale_id = $_GET['delete_sale'];
-
-    // Restore stock for all items in this sale
-    $items = $conn->query("SELECT variant_id, quantity FROM Sale_Items WHERE sale_id=$sale_id");
-    while($item = $items->fetch_assoc()){
-        $conn->query("UPDATE Product_Variants SET stock = stock + {$item['quantity']} WHERE variant_id = {$item['variant_id']}");
+    if (isset($_POST['edit_sale'])) {
+        handle_edit_sale($conn);
     }
 
-    $conn->query("DELETE FROM Sale_Items WHERE sale_id=$sale_id");
-    $conn->query("DELETE FROM Sales WHERE sale_id=$sale_id");
-    header('Location: sales.php');
-    exit();
+    if (isset($_POST['edit_sale_item'])) {
+        handle_edit_sale_item($conn);
+    }
 }
 
-// Handle deleting sale item
-if (isset($_GET['delete_sale_item'])) {
-    $sale_item_id = $_GET['delete_sale_item'];
+if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    if (isset($_GET['delete_sale'])) {
+        handle_delete_sale($conn);
+    }
 
-    // Restore stock
-    $item = $conn->query("SELECT variant_id, quantity FROM Sale_Items WHERE sale_item_id=$sale_item_id")->fetch_assoc();
-    $conn->query("UPDATE Product_Variants SET stock = stock + {$item['quantity']} WHERE variant_id = {$item['variant_id']}");
-
-    $conn->query("DELETE FROM Sale_Items WHERE sale_item_id=$sale_item_id");
-    header('Location: sales.php');
-    exit();
+    if (isset($_GET['delete_sale_item'])) {
+        handle_delete_sale_item($conn);
+    }
 }
 
-// Get sales statistics
+$flash_messages = get_flash_messages();
+
 $today_sales = $conn->query("SELECT SUM(si.quantity * si.sell_price) as total FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE DATE(s.sale_date) = CURDATE()")->fetch_assoc();
 $month_sales = $conn->query("SELECT SUM(si.quantity * si.sell_price) as total FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())")->fetch_assoc();
 $today_sales_total = $today_sales['total'] ?: 0;
 $month_sales_total = $month_sales['total'] ?: 0;
 
-// Get products for dropdown
-$products = $conn->query("SELECT * FROM Products ORDER BY model_name");
+$products = $conn->query('SELECT * FROM Products ORDER BY model_name');
 ?>
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -354,6 +571,12 @@ $products = $conn->query("SELECT * FROM Products ORDER BY model_name");
                     </li>
                 </ul>
             </nav>
+            <div class="p-4 border-t border-gray-200">
+                <a href="logout.php" class="flex items-center justify-center px-4 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition">
+                    <i data-feather="log-out" class="ml-2 w-4 h-4"></i>
+                    خروج از حساب
+                </a>
+            </div>
         </aside>
 
         <!-- Main Content -->
@@ -371,6 +594,21 @@ $products = $conn->query("SELECT * FROM Products ORDER BY model_name");
 
             <!-- Sales Content -->
             <main class="p-6">
+                <?php if (!empty($flash_messages['success']) || !empty($flash_messages['error'])): ?>
+                    <div class="space-y-3 mb-6">
+                        <?php foreach ($flash_messages['success'] as $message): ?>
+                            <div class="flex items-center justify-between bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg">
+                                <span><?php echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); ?></span>
+                            </div>
+                        <?php endforeach; ?>
+                        <?php foreach ($flash_messages['error'] as $message): ?>
+                            <div class="flex items-center justify-between bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+                                <span><?php echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); ?></span>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+
                 <!-- Stats Cards -->
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
                     <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
@@ -460,56 +698,109 @@ $products = $conn->query("SELECT * FROM Products ORDER BY model_name");
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-100">
                             <?php
-                            $sales = $conn->query("SELECT s.*, c.name as customer_name, COUNT(si.sale_item_id) as item_count, SUM(si.quantity * si.sell_price) as total_amount FROM Sales s LEFT JOIN Customers c ON s.customer_id = c.customer_id LEFT JOIN Sale_Items si ON s.sale_id = si.sale_id GROUP BY s.sale_id ORDER BY s.sale_date DESC, s.sale_id DESC");
+                            $salesQuery = "SELECT s.*, c.name AS customer_name, COUNT(si.sale_item_id) AS item_count, SUM(si.quantity * si.sell_price) AS total_amount
+                                FROM Sales s
+                                LEFT JOIN Customers c ON s.customer_id = c.customer_id
+                                LEFT JOIN Sale_Items si ON s.sale_id = si.sale_id
+                                GROUP BY s.sale_id
+                                ORDER BY s.sale_date DESC, s.sale_id DESC";
 
-                            if ($sales->num_rows > 0) {
-                                while($sale = $sales->fetch_assoc()){
-                                    $status_color = $sale['status'] == 'paid' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
-                                    $payment_icon = $sale['payment_method'] == 'cash' ? 'dollar-sign' : ($sale['payment_method'] == 'credit_card' ? 'credit-card' : 'repeat');
-                                    $payment_text = $sale['payment_method'] == 'cash' ? 'نقدی' : ($sale['payment_method'] == 'credit_card' ? 'کارت اعتباری' : 'انتقال بانکی');
+                            $salesResult = $conn->query($salesQuery);
 
-                                    echo "<tr class='hover:bg-gray-50'>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>#فروش-{$sale['sale_id']}</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>".($sale['customer_name'] ?: 'مشتری حضوری')."</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$sale['sale_date']}</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                                <div class='flex items-center'>
-                                                    <i data-feather='$payment_icon' class='w-4 h-4 ml-1'></i>
-                                                    $payment_text
-                                                </div>
-                                            </td>
-                                            <td class='px-6 py-4 whitespace-nowrap'>
-                                                <span class='px-2 py-1 text-xs font-semibold rounded-full $status_color'>".($sale['status'] == 'paid' ? 'پرداخت شده' : 'در انتظار پرداخت')."</span>
-                                            </td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$sale['item_count']}</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900'>".number_format($sale['total_amount'], 0)." تومان</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm font-medium'>
-                                                <div class='flex space-x-2 space-x-reverse'>
-                                                    <button onclick='printReceipt({$sale['sale_id']})' class='p-1 bg-green-100 rounded text-green-600 hover:bg-green-200 transition-colors' title='چاپ رسید'>
-                                                        <i data-feather='printer' class='w-4 h-4'></i>
-                                                    </button>
-                                                    <button onclick='openEditSaleModal({$sale['sale_id']}, {$sale['customer_id']}, \"{$sale['sale_date']}\", \"{$sale['payment_method']}\", \"{$sale['status']}\")' class='p-1 bg-yellow-100 rounded text-yellow-600 hover:bg-yellow-200 transition-colors' title='ویرایش'>
-                                                        <i data-feather='edit' class='w-4 h-4'></i>
-                                                    </button>
-                                                    <a href='?delete_sale={$sale['sale_id']}' onclick='return confirm(\"آیا مطمئن هستید که می‌خواهید این فروش را حذف کنید؟\")' class='p-1 bg-red-100 rounded text-red-600 hover:bg-red-200 transition-colors' title='حذف'>
-                                                        <i data-feather='trash-2' class='w-4 h-4'></i>
-                                                    </a>
-                                                    <button onclick='showSaleItems({$sale['sale_id']})' class='p-1 bg-blue-100 rounded text-blue-600 hover:bg-blue-200 transition-colors' title='مشاهده آیتم‌ها'>
-                                                        <i data-feather='eye' class='w-4 h-4'></i>
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>";
-                                }
-                            } else {
-                                echo "<tr><td colspan='8' class='px-6 py-8 text-center'>
-                                        <i data-feather='shopping-cart' class='w-12 h-12 text-gray-400 mx-auto mb-4'></i>
-                                        <h3 class='text-lg font-medium text-gray-700 mb-2'>هنوز فروشی ثبت نشده است</h3>
-                                        <p class='text-gray-500 mb-4'>برای شروع، اولین فروش خود را ثبت کنید</p>
-                                        <button onclick='openModal(\"newSaleModal\")' class='px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors'>
+                            if ($salesResult === false) {
+                                ?>
+                                <tr>
+                                    <td colspan="8" class="px-6 py-8 text-center text-red-600">
+                                        خطا در بارگذاری اطلاعات فروش. لطفاً بعداً دوباره تلاش کنید.
+                                    </td>
+                                </tr>
+                                <?php
+                            } elseif ($salesResult->num_rows === 0) {
+                                ?>
+                                <tr>
+                                    <td colspan="8" class="px-6 py-8 text-center">
+                                        <i data-feather="shopping-cart" class="w-12 h-12 text-gray-400 mx-auto mb-4"></i>
+                                        <h3 class="text-lg font-medium text-gray-700 mb-2">هنوز فروشی ثبت نشده است</h3>
+                                        <p class="text-gray-500 mb-4">برای شروع، اولین فروش خود را ثبت کنید</p>
+                                        <button onclick="openModal('newSaleModal')" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
                                             ایجاد اولین فروش
                                         </button>
-                                    </td></tr>";
+                                    </td>
+                                </tr>
+                                <?php
+                            } else {
+                                while ($sale = $salesResult->fetch_assoc()) {
+                                    $sale_id = (int) $sale['sale_id'];
+                                    $customer_id = isset($sale['customer_id']) ? (int) $sale['customer_id'] : 0;
+                                    $customer_name = htmlspecialchars($sale['customer_name'] ?: 'مشتری حضوری', ENT_QUOTES, 'UTF-8');
+                                    $sale_date = htmlspecialchars((string) $sale['sale_date'], ENT_QUOTES, 'UTF-8');
+                                    $status = (string) ($sale['status'] ?? 'pending');
+                                    $payment_method = (string) ($sale['payment_method'] ?? 'cash');
+                                    $item_count = (int) ($sale['item_count'] ?? 0);
+                                    $total_amount = number_format((float) ($sale['total_amount'] ?? 0), 0);
+
+                                    $status_color = $status === 'paid' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
+                                    $status_label = $status === 'paid' ? 'پرداخت شده' : 'در انتظار پرداخت';
+
+                                    $payment_icon = 'repeat';
+                                    $payment_text = 'انتقال بانکی';
+
+                                    if ($payment_method === 'cash') {
+                                        $payment_icon = 'dollar-sign';
+                                        $payment_text = 'نقدی';
+                                    } elseif ($payment_method === 'credit_card') {
+                                        $payment_icon = 'credit-card';
+                                        $payment_text = 'کارت اعتباری';
+                                    }
+
+                                    $sale_date_json = json_encode((string) $sale['sale_date'], JSON_UNESCAPED_UNICODE);
+                                    $payment_method_json = json_encode($payment_method, JSON_UNESCAPED_UNICODE);
+                                    $status_json = json_encode($status, JSON_UNESCAPED_UNICODE);
+
+                                    $edit_callback = sprintf(
+                                        'openEditSaleModal(%d, %d, %s, %s, %s)',
+                                        $sale_id,
+                                        $customer_id,
+                                        $sale_date_json,
+                                        $payment_method_json,
+                                        $status_json
+                                    );
+                                    $edit_callback_escaped = htmlspecialchars($edit_callback, ENT_QUOTES, 'UTF-8');
+                                    ?>
+                                    <tr class="hover:bg-gray-50">
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">#فروش-<?php echo $sale_id; ?></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?php echo $customer_name; ?></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?php echo $sale_date; ?></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                            <div class="flex items-center">
+                                                <i data-feather="<?php echo htmlspecialchars($payment_icon, ENT_QUOTES, 'UTF-8'); ?>" class="w-4 h-4 ml-1"></i>
+                                                <?php echo htmlspecialchars($payment_text, ENT_QUOTES, 'UTF-8'); ?>
+                                            </div>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <span class="px-2 py-1 text-xs font-semibold rounded-full <?php echo $status_color; ?>"><?php echo $status_label; ?></span>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?php echo $item_count; ?></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900"><?php echo $total_amount; ?> تومان</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                            <div class="flex space-x-2 space-x-reverse">
+                                                <button onclick="printReceipt(<?php echo $sale_id; ?>)" class="p-1 bg-green-100 rounded text-green-600 hover:bg-green-200 transition-colors" title="چاپ رسید">
+                                                    <i data-feather="printer" class="w-4 h-4"></i>
+                                                </button>
+                                                <button onclick="<?php echo $edit_callback_escaped; ?>" class="p-1 bg-yellow-100 rounded text-yellow-600 hover:bg-yellow-200 transition-colors" title="ویرایش">
+                                                    <i data-feather="edit" class="w-4 h-4"></i>
+                                                </button>
+                                                <a href="?delete_sale=<?php echo $sale_id; ?>" onclick="return confirm('آیا مطمئن هستید که می‌خواهید این فروش را حذف کنید؟')" class="p-1 bg-red-100 rounded text-red-600 hover:bg-red-200 transition-colors" title="حذف">
+                                                    <i data-feather="trash-2" class="w-4 h-4"></i>
+                                                </a>
+                                                <button onclick="showSaleItems(<?php echo $sale_id; ?>)" class="p-1 bg-blue-100 rounded text-blue-600 hover:bg-blue-200 transition-colors" title="مشاهده آیتم‌ها">
+                                                    <i data-feather="eye" class="w-4 h-4"></i>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <?php
+                                }
                             }
                             ?>
                         </tbody>

@@ -1,109 +1,163 @@
 <?php
-include 'env/db.php';
+require_once __DIR__ . '/env/bootstrap.php';
 
-// Handle creating new product
-if (isset($_POST['create_product'])) {
-    $model_name = trim($_POST['model_name']);
-    $category = $_POST['category'];
-
-    if (empty($model_name)) {
-        header('Location: products.php?error=empty_model_name');
-        exit();
+function sanitize_text_field(string $value, string $empty_message): string
+{
+    $trimmed = trim($value);
+    if ($trimmed === '') {
+        throw new InvalidArgumentException($empty_message);
     }
 
-    $conn->query("INSERT INTO Products (model_name, category) VALUES ('$model_name', '$category')");
-    header('Location: products.php?success=product_created');
-    exit();
+    return $trimmed;
 }
 
-// Handle creating new product variant
-if (isset($_POST['create_variant'])) {
-    $product_id = $_POST['product_id'];
-    $color = trim($_POST['color']);
-    $size = $_POST['size'];
-    $price = floatval($_POST['price']);
-    $stock = intval($_POST['stock']);
-
-    if (empty($color) || $price <= 0 || $stock < 0) {
-        header('Location: products.php?error=invalid_variant_data');
-        exit();
+function validate_price(mixed $value): float
+{
+    if (!is_numeric($value)) {
+        throw new InvalidArgumentException('قیمت وارد شده نامعتبر است.');
     }
 
-    $conn->query("INSERT INTO Product_Variants (product_id, color, size, price, stock) VALUES ($product_id, '$color', '$size', $price, $stock)");
-    header('Location: products.php?success=variant_created');
-    exit();
-}
-
-// Handle editing product
-if (isset($_POST['edit_product'])) {
-    $product_id = $_POST['product_id'];
-    $model_name = trim($_POST['model_name']);
-    $category = $_POST['category'];
-
-    if (empty($model_name)) {
-        header('Location: products.php?error=empty_model_name');
-        exit();
+    $price = (float) $value;
+    if ($price <= 0) {
+        throw new InvalidArgumentException('قیمت باید بزرگ‌تر از صفر باشد.');
     }
 
-    $conn->query("UPDATE Products SET model_name='$model_name', category='$category' WHERE product_id=$product_id");
-    header('Location: products.php?success=product_updated');
-    exit();
+    return $price;
 }
 
-// Handle editing variant
-if (isset($_POST['edit_variant'])) {
-    $variant_id = $_POST['variant_id'];
-    $color = trim($_POST['color']);
-    $size = $_POST['size'];
-    $price = floatval($_POST['price']);
-    $stock = intval($_POST['stock']);
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (isset($_POST['create_product'])) {
+        try {
+            $model_name = sanitize_text_field((string) ($_POST['model_name'] ?? ''), 'نام مدل نمی‌تواند خالی باشد.');
+            $category = sanitize_text_field((string) ($_POST['category'] ?? ''), 'دسته‌بندی نمی‌تواند خالی باشد.');
 
-    if (empty($color) || $price <= 0 || $stock < 0) {
-        header('Location: products.php?error=invalid_variant_data');
-        exit();
+            $stmt = $conn->prepare('INSERT INTO Products (model_name, category) VALUES (?, ?)');
+            $stmt->bind_param('ss', $model_name, $category);
+            $stmt->execute();
+
+            redirect_with_message('products.php', 'success', 'محصول جدید با موفقیت ایجاد شد.');
+        } catch (Throwable $e) {
+            redirect_with_message('products.php', 'error', normalize_error_message($e));
+        }
     }
 
-    $conn->query("UPDATE Product_Variants SET color='$color', size='$size', price=$price, stock=$stock WHERE variant_id=$variant_id");
-    header('Location: products.php?success=variant_updated');
-    exit();
-}
+    if (isset($_POST['create_variant'])) {
+        try {
+            $product_id = validate_int($_POST['product_id'] ?? null, 1);
+            $color = sanitize_text_field((string) ($_POST['color'] ?? ''), 'رنگ نمی‌تواند خالی باشد.');
+            $size = sanitize_text_field((string) ($_POST['size'] ?? ''), 'سایز نمی‌تواند خالی باشد.');
+            $price = validate_price($_POST['price'] ?? null);
+            $stock = validate_int($_POST['stock'] ?? null, 0);
 
-// Handle deleting product
-if (isset($_GET['delete_product'])) {
-    $product_id = $_GET['delete_product'];
+            $stmt = $conn->prepare('INSERT INTO Product_Variants (product_id, color, size, price, stock) VALUES (?, ?, ?, ?, ?)');
+            $stmt->bind_param('issdi', $product_id, $color, $size, $price, $stock);
+            $stmt->execute();
 
-    // Check if product has sales
-    $has_sales = $conn->query("SELECT COUNT(*) as count FROM Sale_Items si JOIN Product_Variants pv ON si.variant_id = pv.variant_id WHERE pv.product_id = $product_id")->fetch_assoc()['count'];
-
-    if ($has_sales > 0) {
-        header('Location: products.php?error=product_has_sales');
-        exit();
+            redirect_with_message('products.php', 'success', 'تنوع جدید با موفقیت اضافه شد.');
+        } catch (Throwable $e) {
+            redirect_with_message('products.php', 'error', normalize_error_message($e));
+        }
     }
 
-    $conn->query("DELETE FROM Product_Variants WHERE product_id=$product_id");
-    $conn->query("DELETE FROM Products WHERE product_id=$product_id");
-    header('Location: products.php?success=product_deleted');
-    exit();
-}
+    if (isset($_POST['edit_product'])) {
+        try {
+            $product_id = validate_int($_POST['product_id'] ?? null, 1);
+            $model_name = sanitize_text_field((string) ($_POST['model_name'] ?? ''), 'نام مدل نمی‌تواند خالی باشد.');
+            $category = sanitize_text_field((string) ($_POST['category'] ?? ''), 'دسته‌بندی نمی‌تواند خالی باشد.');
 
-// Handle deleting variant
-if (isset($_GET['delete_variant'])) {
-    $variant_id = $_GET['delete_variant'];
+            $stmt = $conn->prepare('UPDATE Products SET model_name = ?, category = ? WHERE product_id = ?');
+            $stmt->bind_param('ssi', $model_name, $category, $product_id);
+            $stmt->execute();
 
-    // Check if variant has sales
-    $has_sales = $conn->query("SELECT COUNT(*) as count FROM Sale_Items WHERE variant_id = $variant_id")->fetch_assoc()['count'];
-
-    if ($has_sales > 0) {
-        header('Location: products.php?error=variant_has_sales');
-        exit();
+            redirect_with_message('products.php', 'success', 'محصول با موفقیت به‌روزرسانی شد.');
+        } catch (Throwable $e) {
+            redirect_with_message('products.php', 'error', normalize_error_message($e));
+        }
     }
 
-    $conn->query("DELETE FROM Product_Variants WHERE variant_id=$variant_id");
-    header('Location: products.php?success=variant_deleted');
-    exit();
+    if (isset($_POST['edit_variant'])) {
+        try {
+            $variant_id = validate_int($_POST['variant_id'] ?? null, 1);
+            $color = sanitize_text_field((string) ($_POST['color'] ?? ''), 'رنگ نمی‌تواند خالی باشد.');
+            $size = sanitize_text_field((string) ($_POST['size'] ?? ''), 'سایز نمی‌تواند خالی باشد.');
+            $price = validate_price($_POST['price'] ?? null);
+            $stock = validate_int($_POST['stock'] ?? null, 0);
+
+            $stmt = $conn->prepare('UPDATE Product_Variants SET color = ?, size = ?, price = ?, stock = ? WHERE variant_id = ?');
+            $stmt->bind_param('ssdii', $color, $size, $price, $stock, $variant_id);
+            $stmt->execute();
+
+            redirect_with_message('products.php', 'success', 'تنوع محصول با موفقیت به‌روزرسانی شد.');
+        } catch (Throwable $e) {
+            redirect_with_message('products.php', 'error', normalize_error_message($e));
+        }
+    }
 }
 
-// Get statistics
+if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    if (isset($_GET['delete_product'])) {
+        $transactionStarted = false;
+
+        try {
+            $product_id = validate_int($_GET['delete_product'] ?? null, 1);
+
+            $checkStmt = $conn->prepare('SELECT COUNT(*) as count FROM Sale_Items si JOIN Product_Variants pv ON si.variant_id = pv.variant_id WHERE pv.product_id = ?');
+            $checkStmt->bind_param('i', $product_id);
+            $checkStmt->execute();
+            $hasSales = (int) $checkStmt->get_result()->fetch_assoc()['count'];
+
+            if ($hasSales > 0) {
+                throw new RuntimeException('نمی‌توان محصول دارای فروش ثبت شده را حذف کرد.');
+            }
+
+            $conn->begin_transaction();
+            $transactionStarted = true;
+
+            $deleteVariants = $conn->prepare('DELETE FROM Product_Variants WHERE product_id = ?');
+            $deleteVariants->bind_param('i', $product_id);
+            $deleteVariants->execute();
+
+            $deleteProduct = $conn->prepare('DELETE FROM Products WHERE product_id = ?');
+            $deleteProduct->bind_param('i', $product_id);
+            $deleteProduct->execute();
+
+            $conn->commit();
+            redirect_with_message('products.php', 'success', 'محصول با موفقیت حذف شد.');
+        } catch (Throwable $e) {
+            if ($transactionStarted) {
+                $conn->rollback();
+            }
+
+            redirect_with_message('products.php', 'error', normalize_error_message($e));
+        }
+    }
+
+    if (isset($_GET['delete_variant'])) {
+        try {
+            $variant_id = validate_int($_GET['delete_variant'] ?? null, 1);
+
+            $checkStmt = $conn->prepare('SELECT COUNT(*) as count FROM Sale_Items WHERE variant_id = ?');
+            $checkStmt->bind_param('i', $variant_id);
+            $checkStmt->execute();
+            $hasSales = (int) $checkStmt->get_result()->fetch_assoc()['count'];
+
+            if ($hasSales > 0) {
+                throw new RuntimeException('نمی‌توان تنوعی که فروش داشته است را حذف کرد.');
+            }
+
+            $deleteStmt = $conn->prepare('DELETE FROM Product_Variants WHERE variant_id = ?');
+            $deleteStmt->bind_param('i', $variant_id);
+            $deleteStmt->execute();
+
+            redirect_with_message('products.php', 'success', 'تنوع محصول حذف شد.');
+        } catch (Throwable $e) {
+            redirect_with_message('products.php', 'error', normalize_error_message($e));
+        }
+    }
+}
+
+$flash_messages = get_flash_messages();
+
 $total_products = $conn->query("SELECT COUNT(*) as count FROM Products")->fetch_assoc()['count'];
 $total_variants = $conn->query("SELECT COUNT(*) as count FROM Product_Variants")->fetch_assoc()['count'];
 $total_stock = $conn->query("SELECT SUM(stock) as total FROM Product_Variants")->fetch_assoc()['total'] ?: 0;
@@ -208,38 +262,20 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
     </style>
 </head>
 <body class="bg-gray-50">
-    <!-- Success/Error Messages -->
-    <?php if (isset($_GET['success'])): ?>
-        <div id="successMessage" class="fixed top-4 left-4 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg z-50 animate-slide-up">
-            <div class="flex items-center">
-                <i data-feather="check-circle" class="ml-2"></i>
-                <?php
-                switch ($_GET['success']) {
-                    case 'product_created': echo 'محصول با موفقیت ایجاد شد!'; break;
-                    case 'variant_created': echo 'تنوع محصول با موفقیت ایجاد شد!'; break;
-                    case 'product_updated': echo 'محصول با موفقیت ویرایش شد!'; break;
-                    case 'variant_updated': echo 'تنوع محصول با موفقیت ویرایش شد!'; break;
-                    case 'product_deleted': echo 'محصول با موفقیت حذف شد!'; break;
-                    case 'variant_deleted': echo 'تنوع محصول با موفقیت حذف شد!'; break;
-                }
-                ?>
-            </div>
-        </div>
-    <?php endif; ?>
-
-    <?php if (isset($_GET['error'])): ?>
-        <div id="errorMessage" class="fixed top-4 left-4 bg-red-500 text-white px-6 py-3 rounded-lg shadow-lg z-50 animate-slide-up">
-            <div class="flex items-center">
-                <i data-feather="alert-circle" class="ml-2"></i>
-                <?php
-                switch ($_GET['error']) {
-                    case 'empty_model_name': echo 'نام مدل نمی‌تواند خالی باشد!'; break;
-                    case 'invalid_variant_data': echo 'اطلاعات تنوع محصول نامعتبر است!'; break;
-                    case 'product_has_sales': echo 'نمی‌توان محصول دارای فروش را حذف کرد!'; break;
-                    case 'variant_has_sales': echo 'نمی‌توان تنوع محصول دارای فروش را حذف کرد!'; break;
-                }
-                ?>
-            </div>
+    <?php if (!empty($flash_messages['success']) || !empty($flash_messages['error'])): ?>
+        <div class="fixed top-4 left-4 right-4 md:right-auto md:max-w-sm space-y-3 z-50">
+            <?php foreach ($flash_messages['success'] as $message): ?>
+                <div class="bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg animate-slide-up flex items-center">
+                    <i data-feather="check-circle" class="ml-2"></i>
+                    <span><?php echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); ?></span>
+                </div>
+            <?php endforeach; ?>
+            <?php foreach ($flash_messages['error'] as $message): ?>
+                <div class="bg-red-500 text-white px-6 py-3 rounded-lg shadow-lg animate-slide-up flex items-center">
+                    <i data-feather="alert-circle" class="ml-2"></i>
+                    <span><?php echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); ?></span>
+                </div>
+            <?php endforeach; ?>
         </div>
     <?php endif; ?>
 
@@ -261,6 +297,12 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
                         <i data-feather="refresh-ccw" class="ml-2"></i>مرجوعی‌ها</a></li>
                 </ul>
             </nav>
+            <div class="p-4 border-t border-gray-200">
+                <a href="logout.php" class="flex items-center justify-center px-4 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition">
+                    <i data-feather="log-out" class="ml-2 w-4 h-4"></i>
+                    خروج از حساب
+                </a>
+            </div>
         </aside>
 
         <!-- Main Content -->
@@ -336,102 +378,133 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
                     </div>
                     <div class="divide-y divide-gray-100">
                         <?php
-                        $products = $conn->query("SELECT * FROM Products ORDER BY product_id DESC");
-                        if ($products->num_rows > 0) {
-                            while($product = $products->fetch_assoc()){
-                                echo "<div class='p-6 hover:bg-gray-50 transition-colors'>
-                                        <div class='flex justify-between items-start mb-4'>
-                                            <div class='flex-1'>
-                                                <h4 class='text-lg font-semibold text-gray-800 mb-1'>{$product['model_name']}</h4>
-                                                <p class='text-sm text-gray-500'>دسته‌بندی: {$product['category']}</p>
-                                            </div>
-                                            <div class='flex items-center space-x-2'>
-                                                <button onclick='openEditModal(\"product\", {$product['product_id']}, \"{$product['model_name']}\", \"{$product['category']}\")' class='p-2 bg-yellow-50 text-yellow-600 rounded-lg hover:bg-yellow-100 transition-colors' title='ویرایش محصول'>
-                                                    <i data-feather='edit-2' class='w-4 h-4'></i>
-                                                </button>
-                                                <button onclick='openModal(\"variantModal\", {$product['product_id']})' class='p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors' title='افزودن تنوع'>
-                                                    <i data-feather='plus' class='w-4 h-4'></i>
-                                                </button>
-                                                <button onclick='deleteProduct({$product['product_id']})' class='p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors' title='حذف محصول'>
-                                                    <i data-feather='trash-2' class='w-4 h-4'></i>
-                                                </button>
-                                            </div>
-                                        </div>";
+                        $productsResult = $conn->query("SELECT * FROM Products ORDER BY product_id DESC");
+                        $variantStmt = $conn->prepare('SELECT * FROM Product_Variants WHERE product_id = ? ORDER BY variant_id DESC');
+                        ?>
 
-                                $variants = $conn->query("SELECT * FROM Product_Variants WHERE product_id={$product['product_id']} ORDER BY variant_id DESC");
-                                if ($variants->num_rows > 0) {
-                                    echo "<div class='overflow-x-auto'>
-                                            <table class='w-full text-sm'>
-                                                <thead class='bg-gray-50'>
+                        <?php if ($productsResult->num_rows > 0): ?>
+                            <?php while ($product = $productsResult->fetch_assoc()): ?>
+                                <?php
+                                $product_id = (int) $product['product_id'];
+                                $model_name = htmlspecialchars($product['model_name'], ENT_QUOTES, 'UTF-8');
+                                $category = htmlspecialchars((string) ($product['category'] ?? ''), ENT_QUOTES, 'UTF-8');
+                                $editProductCallback = htmlspecialchars(sprintf('openEditModal("product", %d, %s, %s)', $product_id, json_encode($product['model_name']), json_encode($product['category'])), ENT_QUOTES, 'UTF-8');
+                                $openVariantModal = htmlspecialchars(sprintf('openModal("variantModal", %d)', $product_id), ENT_QUOTES, 'UTF-8');
+                                $deleteProductCallback = htmlspecialchars(sprintf('deleteProduct(%d)', $product_id), ENT_QUOTES, 'UTF-8');
+
+                                $variantStmt->bind_param('i', $product_id);
+                                $variantStmt->execute();
+                                $variantsResult = $variantStmt->get_result();
+                                ?>
+                                <div class="p-6 hover:bg-gray-50 transition-colors">
+                                    <div class="flex justify-between items-start mb-4">
+                                        <div class="flex-1">
+                                            <h4 class="text-lg font-semibold text-gray-800 mb-1"><?php echo $model_name; ?></h4>
+                                            <p class="text-sm text-gray-500">دسته‌بندی: <?php echo $category !== '' ? $category : '—'; ?></p>
+                                        </div>
+                                        <div class="flex items-center space-x-2">
+                                            <button onclick="<?php echo $editProductCallback; ?>" class="p-2 bg-yellow-50 text-yellow-600 rounded-lg hover:bg-yellow-100 transition-colors" title="ویرایش محصول">
+                                                <i data-feather="edit-2" class="w-4 h-4"></i>
+                                            </button>
+                                            <button onclick="<?php echo $openVariantModal; ?>" class="p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors" title="افزودن تنوع">
+                                                <i data-feather="plus" class="w-4 h-4"></i>
+                                            </button>
+                                            <button onclick="<?php echo $deleteProductCallback; ?>" class="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors" title="حذف محصول">
+                                                <i data-feather="trash-2" class="w-4 h-4"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <?php if ($variantsResult->num_rows > 0): ?>
+                                        <div class="overflow-x-auto">
+                                            <table class="w-full text-sm">
+                                                <thead class="bg-gray-50">
                                                     <tr>
-                                                        <th class='px-4 py-3 text-right font-medium text-gray-700'>رنگ</th>
-                                                        <th class='px-4 py-3 text-right font-medium text-gray-700'>سایز</th>
-                                                        <th class='px-4 py-3 text-right font-medium text-gray-700'>قیمت</th>
-                                                        <th class='px-4 py-3 text-right font-medium text-gray-700'>موجودی</th>
-                                                        <th class='px-4 py-3 text-right font-medium text-gray-700'>وضعیت</th>
-                                                        <th class='px-4 py-3 text-right font-medium text-gray-700'>عملیات</th>
+                                                        <th class="px-4 py-3 text-right font-medium text-gray-700">رنگ</th>
+                                                        <th class="px-4 py-3 text-right font-medium text-gray-700">سایز</th>
+                                                        <th class="px-4 py-3 text-right font-medium text-gray-700">قیمت</th>
+                                                        <th class="px-4 py-3 text-right font-medium text-gray-700">موجودی</th>
+                                                        <th class="px-4 py-3 text-right font-medium text-gray-700">وضعیت</th>
+                                                        <th class="px-4 py-3 text-right font-medium text-gray-700">عملیات</th>
                                                     </tr>
                                                 </thead>
-                                                <tbody class='divide-y divide-gray-100'>";
-                                    while($variant = $variants->fetch_assoc()){
-                                        $stock_class = '';
-                                        $status_text = '';
-                                        if ($variant['stock'] == 0) {
-                                            $stock_class = 'out-of-stock';
-                                            $status_text = 'تمام شده';
-                                        } elseif ($variant['stock'] <= 5) {
-                                            $stock_class = 'low-stock';
-                                            $status_text = 'کم‌موجود';
-                                        } else {
-                                            $status_text = 'موجود';
-                                        }
+                                                <tbody class="divide-y divide-gray-100">
+                                                    <?php while ($variant = $variantsResult->fetch_assoc()): ?>
+                                                        <?php
+                                                        $variant_id = (int) $variant['variant_id'];
+                                                        $color = htmlspecialchars((string) $variant['color'], ENT_QUOTES, 'UTF-8');
+                                                        $size = htmlspecialchars((string) $variant['size'], ENT_QUOTES, 'UTF-8');
+                                                        $price_display = number_format((float) $variant['price'], 0);
+                                                        $stock = (int) $variant['stock'];
+                                                        if ($stock === 0) {
+                                                            $rowClass = 'out-of-stock';
+                                                            $status_text = 'تمام شده';
+                                                            $status_color = 'bg-red-100 text-red-800';
+                                                        } elseif ($stock <= 5) {
+                                                            $rowClass = 'low-stock';
+                                                            $status_text = 'کم‌موجود';
+                                                            $status_color = 'bg-yellow-100 text-yellow-800';
+                                                        } else {
+                                                            $rowClass = '';
+                                                            $status_text = 'موجود';
+                                                            $status_color = 'bg-green-100 text-green-800';
+                                                        }
 
-                                        echo "<tr class='{$stock_class}'>
-                                                <td class='px-4 py-3 text-gray-800'>{$variant['color']}</td>
-                                                <td class='px-4 py-3 text-gray-800'>{$variant['size']}</td>
-                                                <td class='px-4 py-3 text-gray-800'>".number_format($variant['price'], 0)." تومان</td>
-                                                <td class='px-4 py-3 text-gray-800'>{$variant['stock']}</td>
-                                                <td class='px-4 py-3'>
-                                                    <span class='px-2 py-1 text-xs rounded-full " . ($variant['stock'] == 0 ? 'bg-red-100 text-red-800' : ($variant['stock'] <= 5 ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800')) . "'>
-                                                        {$status_text}
-                                                    </span>
-                                                </td>
-                                                <td class='px-4 py-3'>
-                                                    <div class='flex items-center space-x-2'>
-                                                        <button onclick='openEditModal(\"variant\", {$variant['variant_id']}, \"{$variant['color']}\", \"{$variant['size']}\", {$variant['price']}, {$variant['stock']})' class='p-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors' title='ویرایش'>
-                                                            <i data-feather='edit-3' class='w-3.5 h-3.5'></i>
-                                                        </button>
-                                                        <button onclick='deleteVariant({$variant['variant_id']})' class='p-1.5 bg-red-50 text-red-600 rounded hover:bg-red-100 transition-colors' title='حذف'>
-                                                            <i data-feather='trash' class='w-3.5 h-3.5'></i>
-                                                        </button>
-                                                    </div>
-                                                </td>
-                                            </tr>";
-                                    }
-                                    echo "</tbody></table></div>";
-                                } else {
-                                    echo "<div class='text-center py-8 text-gray-500'>
-                                            <i data-feather='package' class='w-12 h-12 mx-auto mb-3 opacity-50'></i>
+                                                        $editVariantCallback = htmlspecialchars(sprintf(
+                                                            'openEditModal("variant", %d, %s, %s, %s, %d)',
+                                                            $variant_id,
+                                                            json_encode($variant['color']),
+                                                            json_encode($variant['size']),
+                                                            json_encode((float) $variant['price']),
+                                                            $stock
+                                                        ), ENT_QUOTES, 'UTF-8');
+                                                        $deleteVariantCallback = htmlspecialchars(sprintf('deleteVariant(%d)', $variant_id), ENT_QUOTES, 'UTF-8');
+                                                        ?>
+                                                        <tr class="<?php echo $rowClass; ?>">
+                                                            <td class="px-4 py-3 text-gray-800"><?php echo $color; ?></td>
+                                                            <td class="px-4 py-3 text-gray-800"><?php echo $size; ?></td>
+                                                            <td class="px-4 py-3 text-gray-800"><?php echo $price_display; ?> تومان</td>
+                                                            <td class="px-4 py-3 text-gray-800"><?php echo $stock; ?></td>
+                                                            <td class="px-4 py-3">
+                                                                <span class="px-2 py-1 text-xs rounded-full <?php echo $status_color; ?>"><?php echo $status_text; ?></span>
+                                                            </td>
+                                                            <td class="px-4 py-3">
+                                                                <div class="flex items-center space-x-2">
+                                                                    <button onclick="<?php echo $editVariantCallback; ?>" class="p-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors" title="ویرایش">
+                                                                        <i data-feather="edit-3" class="w-3.5 h-3.5"></i>
+                                                                    </button>
+                                                                    <button onclick="<?php echo $deleteVariantCallback; ?>" class="p-1.5 bg-red-50 text-red-600 rounded hover:bg-red-100 transition-colors" title="حذف">
+                                                                        <i data-feather="trash" class="w-3.5 h-3.5"></i>
+                                                                    </button>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    <?php endwhile; ?>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    <?php else: ?>
+                                        <div class="text-center py-8 text-gray-500">
+                                            <i data-feather="package" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
                                             <p>هیچ تنوعی برای این محصول تعریف نشده است</p>
-                                            <button onclick='openModal(\"variantModal\", {$product['product_id']})' class='mt-3 px-4 py-2 bg-blue-500 text-white text-sm rounded-lg hover:bg-blue-600 transition-colors'>
+                                            <button onclick="<?php echo $openVariantModal; ?>" class="mt-3 px-4 py-2 bg-blue-500 text-white text-sm rounded-lg hover:bg-blue-600 transition-colors">
                                                 افزودن اولین تنوع
                                             </button>
-                                        </div>";
-                                }
-                                echo "</div>";
-                            }
-                        } else {
-                            echo "<div class='text-center py-16 text-gray-500'>
-                                    <i data-feather='package' class='w-16 h-16 mx-auto mb-4 opacity-50'></i>
-                                    <h3 class='text-lg font-medium text-gray-900 mb-2'>هیچ محصولی یافت نشد</h3>
-                                    <p class='mb-6'>اولین محصول خود را اضافه کنید</p>
-                                    <button onclick='openModal(\"productModal\")' class='px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors shadow-sm hover:shadow-md'>
-                                        <i data-feather='plus' class='ml-2'></i>
-                                        محصول جدید
-                                    </button>
-                                </div>";
-                        }
-                        ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                            <?php endwhile; ?>
+                        <?php else: ?>
+                            <div class="text-center py-16 text-gray-500">
+                                <i data-feather="package" class="w-16 h-16 mx-auto mb-4 opacity-50"></i>
+                                <h3 class="text-lg font-medium text-gray-900 mb-2">هیچ محصولی یافت نشد</h3>
+                                <p class="mb-6">اولین محصول خود را اضافه کنید</p>
+                                <button onclick="openModal('productModal')" class="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors shadow-sm hover:shadow-md">
+                                    <i data-feather="plus" class="ml-2"></i>
+                                    محصول جدید
+                                </button>
+                            </div>
+                        <?php endif; ?>
                     </div>
                 </div>
             </main>

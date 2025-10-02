@@ -1,4 +1,9 @@
 <?php
+if (php_sapi_name() !== 'cli') {
+    http_response_code(403);
+    exit('این اسکریپت فقط از طریق خط فرمان قابل اجرا است.');
+}
+
 include 'env/db.php';
 
 try {

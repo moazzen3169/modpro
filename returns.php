@@ -1,70 +1,135 @@
 <?php
-include 'env/db.php';
+require_once __DIR__ . '/env/bootstrap.php';
 
-// Handle creating new return
-if (isset($_POST['create_return'])) {
-    $customer_id = $_POST['customer_id'];
-    $return_date = $_POST['return_date'];
-    $reason = $_POST['reason'];
+function handle_create_return(mysqli $conn): void
+{
+    $transactionStarted = false;
 
-    // Validate return items quantities
-    $valid_items = [];
-    if (isset($_POST['items']) && is_array($_POST['items'])) {
-        foreach ($_POST['items'] as $item) {
-            $quantity = intval($item['quantity']);
+    try {
+        $conn->begin_transaction();
+        $transactionStarted = true;
+
+        $customer_id = validate_int($_POST['customer_id'] ?? 0, 0);
+        $return_date = validate_date((string)($_POST['return_date'] ?? ''));
+        $reason = trim((string)($_POST['reason'] ?? ''));
+
+        $raw_items = $_POST['items'] ?? [];
+        if (!is_array($raw_items) || $raw_items === []) {
+            throw new InvalidArgumentException('برای ثبت مرجوعی حداقل یک آیتم لازم است.');
+        }
+
+        $items = [];
+        foreach ($raw_items as $item) {
+            $variant_id = validate_int($item['variant_id'] ?? null, 1);
+            $quantity = validate_int($item['quantity'] ?? null, 1);
+            $items[] = ['variant_id' => $variant_id, 'quantity' => $quantity];
+        }
+
+        $insertReturnStmt = $conn->prepare('INSERT INTO Returns (customer_id, return_date, reason) VALUES (?, ?, ?)');
+        $insertReturnStmt->bind_param('iss', $customer_id, $return_date, $reason);
+        $insertReturnStmt->execute();
+        $return_id = (int) $conn->insert_id;
+
+        $variantStmt = $conn->prepare('SELECT price FROM Product_Variants WHERE variant_id = ? FOR UPDATE');
+        $insertItemStmt = $conn->prepare('INSERT INTO Return_Items (return_id, variant_id, quantity, return_price) VALUES (?, ?, ?, ?)');
+        $updateStockStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?');
+
+        foreach ($items as $item) {
+            $variant_id = $item['variant_id'];
+            $quantity = $item['quantity'];
+
+            $variantStmt->bind_param('i', $variant_id);
+            $variantStmt->execute();
+            $variant = $variantStmt->get_result()->fetch_assoc();
+            if (!$variant) {
+                throw new RuntimeException('تنوع انتخاب‌شده وجود ندارد.');
+            }
+
+            $price = (float) $variant['price'];
+
+            $insertItemStmt->bind_param('iiid', $return_id, $variant_id, $quantity, $price);
+            $insertItemStmt->execute();
+
+            $updateStockStmt->bind_param('ii', $quantity, $variant_id);
+            $updateStockStmt->execute();
+        }
+
+        $conn->commit();
+        redirect_with_message('returns.php', 'success', 'مرجوعی جدید با موفقیت ثبت شد و موجودی به‌روزرسانی گردید.');
+    } catch (Throwable $e) {
+        if ($transactionStarted) {
+            $conn->rollback();
+        }
+
+        redirect_with_message('returns.php', 'error', normalize_error_message($e));
+    }
+}
+
+function handle_delete_return(mysqli $conn): void
+{
+    $transactionStarted = false;
+
+    try {
+        $conn->begin_transaction();
+        $transactionStarted = true;
+
+        $return_id = validate_int($_GET['delete_return'] ?? null, 1);
+
+        $returnStmt = $conn->prepare('SELECT return_id FROM Returns WHERE return_id = ? FOR UPDATE');
+        $returnStmt->bind_param('i', $return_id);
+        $returnStmt->execute();
+        $returnExists = $returnStmt->get_result()->fetch_assoc();
+        if (!$returnExists) {
+            throw new RuntimeException('مرجوعی موردنظر یافت نشد.');
+        }
+
+        $itemsStmt = $conn->prepare('SELECT variant_id, quantity FROM Return_Items WHERE return_id = ? FOR UPDATE');
+        $itemsStmt->bind_param('i', $return_id);
+        $itemsStmt->execute();
+        $itemsResult = $itemsStmt->get_result();
+
+        $decreaseStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock - ? WHERE variant_id = ?');
+        while ($item = $itemsResult->fetch_assoc()) {
+            $quantity = (int) $item['quantity'];
             if ($quantity <= 0) {
                 continue;
             }
-            $valid_items[] = [
-                'variant_id' => $item['variant_id'],
-                'quantity' => $quantity,
-                'return_price' => $item['return_price']
-            ];
+
+            $variant_id = (int) $item['variant_id'];
+            $decreaseStmt->bind_param('ii', $quantity, $variant_id);
+            $decreaseStmt->execute();
         }
+
+        $deleteItemsStmt = $conn->prepare('DELETE FROM Return_Items WHERE return_id = ?');
+        $deleteItemsStmt->bind_param('i', $return_id);
+        $deleteItemsStmt->execute();
+
+        $deleteReturnStmt = $conn->prepare('DELETE FROM Returns WHERE return_id = ?');
+        $deleteReturnStmt->bind_param('i', $return_id);
+        $deleteReturnStmt->execute();
+
+        $conn->commit();
+        redirect_with_message('returns.php', 'success', 'مرجوعی حذف شد و موجودی اصلاح گردید.');
+    } catch (Throwable $e) {
+        if ($transactionStarted) {
+            $conn->rollback();
+        }
+
+        redirect_with_message('returns.php', 'error', normalize_error_message($e));
     }
-
-    if (empty($valid_items)) {
-        header('Location: returns.php?error=no_valid_items');
-        exit();
-    }
-
-    // Insert return
-    $conn->query("INSERT INTO Returns (customer_id, return_date, reason) VALUES ($customer_id, '$return_date', '$reason')");
-    $return_id = $conn->insert_id;
-
-    // Insert return items and update stock
-    foreach ($valid_items as $item) {
-        $variant_id = $item['variant_id'];
-        $quantity = $item['quantity'];
-        $return_price = $item['return_price'];
-
-        $conn->query("INSERT INTO Return_Items (return_id, variant_id, quantity, return_price) VALUES ($return_id, $variant_id, $quantity, $return_price)");
-        // Decrease stock
-        $conn->query("UPDATE Product_Variants SET stock = stock - $quantity WHERE variant_id = $variant_id");
-    }
-
-    header('Location: returns.php');
-    exit();
 }
 
-// Handle deleting return
-if (isset($_GET['delete_return'])) {
-    $return_id = $_GET['delete_return'];
-
-    // Restore stock for all items in this return
-    $items = $conn->query("SELECT variant_id, quantity FROM Return_Items WHERE return_id=$return_id");
-    while($item = $items->fetch_assoc()){
-        $conn->query("UPDATE Product_Variants SET stock = stock + {$item['quantity']} WHERE variant_id = {$item['variant_id']}");
-    }
-
-    $conn->query("DELETE FROM Return_Items WHERE return_id=$return_id");
-    $conn->query("DELETE FROM Returns WHERE return_id=$return_id");
-    header('Location: returns.php');
-    exit();
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_return'])) {
+    handle_create_return($conn);
 }
 
-// Get products for dropdown
-$products = $conn->query("SELECT * FROM Products ORDER BY model_name");
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['delete_return'])) {
+    handle_delete_return($conn);
+}
+
+$flash_messages = get_flash_messages();
+
+$products = $conn->query('SELECT * FROM Products ORDER BY model_name');
 ?>
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -238,6 +303,12 @@ $products = $conn->query("SELECT * FROM Products ORDER BY model_name");
                     </li>
                 </ul>
             </nav>
+            <div class="p-4 border-t border-gray-200">
+                <a href="logout.php" class="flex items-center justify-center px-4 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition">
+                    <i data-feather="log-out" class="ml-2 w-4 h-4"></i>
+                    خروج از حساب
+                </a>
+            </div>
         </aside>
 
         <!-- Main Content -->
@@ -255,6 +326,21 @@ $products = $conn->query("SELECT * FROM Products ORDER BY model_name");
 
             <!-- Returns Content -->
             <main class="p-6">
+                <?php if (!empty($flash_messages['success']) || !empty($flash_messages['error'])): ?>
+                    <div class="space-y-3 mb-6">
+                        <?php foreach ($flash_messages['success'] as $message): ?>
+                            <div class="flex items-center justify-between bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg">
+                                <span><?php echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); ?></span>
+                            </div>
+                        <?php endforeach; ?>
+                        <?php foreach ($flash_messages['error'] as $message): ?>
+                            <div class="flex items-center justify-between bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+                                <span><?php echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); ?></span>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+
                 <!-- Returns List -->
                 <div class="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
                     <table id="returnsTable" class="w-full text-sm text-gray-900">
@@ -275,19 +361,26 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
 
                             if ($returns->num_rows > 0) {
                                 while($return = $returns->fetch_assoc()){
+                                    $return_id = (int) $return['return_id'];
+                                    $customer_name = htmlspecialchars($return['customer_name'] ?: 'مشتری حضوری', ENT_QUOTES, 'UTF-8');
+                                    $return_date = htmlspecialchars((string) $return['return_date'], ENT_QUOTES, 'UTF-8');
+                                    $reason = htmlspecialchars((string) ($return['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
+                                    $item_count = (int) $return['item_count'];
+                                    $total_amount = number_format((float) ($return['total_amount'] ?? 0), 0);
+
                                     echo "<tr class='hover:bg-gray-50'>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>#مرجوعی-{$return['return_id']}</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>".($return['customer_name'] ?: 'مشتری حضوری')."</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$return['return_date']}</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$return['reason']}</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$return['item_count']}</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900'>".number_format($return['total_amount'] ?? 0, 0)." تومان</td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>#مرجوعی-{$return_id}</td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$customer_name}</td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$return_date}</td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$reason}</td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$item_count}</td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900'>{$total_amount} تومان</td>
                                             <td class='px-6 py-4 whitespace-nowrap text-sm font-medium'>
                                                 <div class='flex space-x-2 space-x-reverse'>
-                                                    <button onclick='showReturnItems({$return['return_id']})' class='p-1 bg-blue-100 rounded text-blue-600 hover:bg-blue-200 transition-colors' title='مشاهده آیتم‌ها'>
+                                                    <button onclick='showReturnItems({$return_id})' class='p-1 bg-blue-100 rounded text-blue-600 hover:bg-blue-200 transition-colors' title='مشاهده آیتم‌ها'>
                                                         <i data-feather='eye' class='w-4 h-4'></i>
                                                     </button>
-                                                    <a href='?delete_return={$return['return_id']}' onclick='return confirm(\"آیا مطمئن هستید که می‌خواهید این مرجوعی را حذف کنید؟\")' class='p-1 bg-red-100 rounded text-red-600 hover:bg-red-200 transition-colors' title='حذف'>
+                                                    <a href='?delete_return={$return_id}' onclick='return confirm(\"آیا مطمئن هستید که می‌خواهید این مرجوعی را حذف کنید؟\")' class='p-1 bg-red-100 rounded text-red-600 hover:bg-red-200 transition-colors' title='حذف'>
                                                         <i data-feather='trash-2' class='w-4 h-4'></i>
                                                     </a>
                                                 </div>
@@ -340,7 +433,9 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
                                                         <option value="">انتخاب محصول...</option>
                                                         <?php
                                                         while($product = $products->fetch_assoc()){
-                                                            echo "<option value='{$product['product_id']}'>{$product['model_name']}</option>";
+                                                            $product_id = (int) $product['product_id'];
+                                                            $product_name = htmlspecialchars($product['model_name'], ENT_QUOTES, 'UTF-8');
+                                                            echo "<option value='{$product_id}'>{$product_name}</option>";
                                                         }
                                                         ?>
                                                     </select>
