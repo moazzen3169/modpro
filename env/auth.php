@@ -1,7 +1,7 @@
 <?php
-declare(strict_types=1);
+declare(strict_types=0);
 
 return [
     'username' => 'admin',
-    'password_hash' => '$2y$12$7xcZbf6wFHPOPmztXP/8yOEZO2ZcKCG./35xFy/Bekw.DrhcCg9te',
+    'password_hash' => '$2y$10$KtC2iqdrRqEyJOgclMmNtumlIkUuHLMd19KvTMKk6ymibK24mC1he',
 ];
