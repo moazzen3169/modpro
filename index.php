@@ -1,5 +1,7 @@
 <?php
-include 'env/db.php';
+require_once __DIR__ . '/env/bootstrap.php';
+
+$flash_messages = get_flash_messages();
 
 // Get sales statistics
 $today_sales_amount = $conn->query("SELECT SUM(si.quantity * si.sell_price) as total FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE DATE(s.sale_date) = CURDATE()")->fetch_assoc()['total'] ?: 0;
@@ -155,6 +157,12 @@ while ($row = $top_products_query->fetch_assoc()) {
                     </li>
                 </ul>
             </nav>
+            <div class="p-4 border-t border-gray-200">
+                <a href="logout.php" class="flex items-center justify-center px-4 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition">
+                    <i data-feather="log-out" class="ml-2 w-4 h-4"></i>
+                    خروج از حساب
+                </a>
+            </div>
         </aside>
 
         <!-- Main Content -->
@@ -171,6 +179,21 @@ while ($row = $top_products_query->fetch_assoc()) {
 
             <!-- Dashboard Content -->
             <main class="p-6">
+                <?php if (!empty($flash_messages['success']) || !empty($flash_messages['error'])): ?>
+                    <div class="space-y-3 mb-6">
+                        <?php foreach ($flash_messages['success'] as $message): ?>
+                            <div class="flex items-center justify-between bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg">
+                                <span><?php echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); ?></span>
+                            </div>
+                        <?php endforeach; ?>
+                        <?php foreach ($flash_messages['error'] as $message): ?>
+                            <div class="flex items-center justify-between bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+                                <span><?php echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); ?></span>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+
                 <!-- Stats Cards -->
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
                     <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 card-hover">

@@ -1,67 +1,70 @@
 <?php
-include 'env/db.php';
+require_once __DIR__ . '/env/bootstrap.php';
 
-if (!isset($_GET['sale_id']) || !is_numeric($_GET['sale_id'])) {
-    die('<div style="text-align: center; padding: 50px; font-family: Arial, sans-serif;">
+try {
+    $sale_id = validate_int($_GET['sale_id'] ?? null, 1);
+} catch (Throwable $e) {
+    echo '<div style="text-align: center; padding: 50px; font-family: Vazirmatn, Arial, sans-serif;">
             <h2 style="color: #e74c3c;">خطا</h2>
             <p>شناسه فروش نامعتبر است.</p>
-         </div>');
+         </div>';
+    exit();
 }
 
-$sale_id = intval($_GET['sale_id']);
-
-// Get sale details
-$sale = $conn->query("
-    SELECT s.*, c.name as customer_name
-    FROM Sales s
-    LEFT JOIN Customers c ON s.customer_id = c.customer_id
-    WHERE s.sale_id = $sale_id
-")->fetch_assoc();
+$saleStmt = $conn->prepare('SELECT s.sale_id, s.sale_date, s.payment_method, s.status, COALESCE(c.name, "") AS customer_name FROM Sales s LEFT JOIN Customers c ON s.customer_id = c.customer_id WHERE s.sale_id = ?');
+$saleStmt->bind_param('i', $sale_id);
+$saleStmt->execute();
+$sale = $saleStmt->get_result()->fetch_assoc();
 
 if (!$sale) {
-    die('<div style="text-align: center; padding: 50px; font-family: Arial, sans-serif;">
+    echo '<div style="text-align: center; padding: 50px; font-family: Vazirmatn, Arial, sans-serif;">
             <h2 style="color: #e74c3c;">خطا</h2>
             <p>فروش با شماره ' . $sale_id . ' یافت نشد.</p>
-         </div>');
+         </div>';
+    exit();
 }
 
-// Get sale items
-$items = $conn->query("
-    SELECT si.*, p.model_name, pv.color, pv.size
-    FROM Sale_Items si
-    JOIN Product_Variants pv ON si.variant_id = pv.variant_id
-    JOIN Products p ON pv.product_id = p.product_id
-    WHERE si.sale_id = $sale_id
-");
+$itemsStmt = $conn->prepare('SELECT si.quantity, si.sell_price, p.model_name, pv.color, pv.size FROM Sale_Items si JOIN Product_Variants pv ON si.variant_id = pv.variant_id JOIN Products p ON pv.product_id = p.product_id WHERE si.sale_id = ?');
+$itemsStmt->bind_param('i', $sale_id);
+$itemsStmt->execute();
+$itemsResult = $itemsStmt->get_result();
 
 $sale_items = [];
 $total = 0;
-$item_count = 0;
+while ($item = $itemsResult->fetch_assoc()) {
+    $quantity = (int) $item['quantity'];
+    $sell_price = (float) $item['sell_price'];
+    $line_total = $quantity * $sell_price;
+    $total += $line_total;
 
-while($item = $items->fetch_assoc()){
-    $total += intval($item['quantity']) * floatval($item['sell_price']);
-    $sale_items[] = $item;
-    $item_count++;
+    $sale_items[] = [
+        'model_name' => htmlspecialchars((string) $item['model_name'], ENT_QUOTES, 'UTF-8'),
+        'color' => htmlspecialchars((string) $item['color'], ENT_QUOTES, 'UTF-8'),
+        'size' => htmlspecialchars((string) $item['size'], ENT_QUOTES, 'UTF-8'),
+        'quantity' => $quantity,
+        'sell_price' => $sell_price,
+        'total' => $line_total,
+    ];
 }
 
-$items->data_seek(0); // Reset pointer
-
-// If no items found, show error
-if ($item_count == 0) {
-    die('<div style="text-align: center; padding: 50px; font-family: Arial, sans-serif;">
+if (count($sale_items) === 0) {
+    echo '<div style="text-align: center; padding: 50px; font-family: Vazirmatn, Arial, sans-serif;">
             <h2 style="color: #f39c12;">اطلاعات ناقص</h2>
             <p>هیچ آیتمی برای فروش شماره ' . $sale_id . ' یافت نشد.</p>
-         </div>');
+         </div>';
+    exit();
 }
 
-// Payment method text
 $payment_methods = [
     'cash' => 'نقدی',
     'credit_card' => 'کارت اعتباری',
-    'bank_transfer' => 'انتقال بانکی'
+    'bank_transfer' => 'انتقال بانکی',
 ];
-$payment_text = $payment_methods[$sale['payment_method']] ?? $sale['payment_method'];
-
+$payment_text = htmlspecialchars($payment_methods[$sale['payment_method']] ?? $sale['payment_method'], ENT_QUOTES, 'UTF-8');
+$customer_name = htmlspecialchars($sale['customer_name'] ?: 'مشتری حضوری', ENT_QUOTES, 'UTF-8');
+$sale_date = htmlspecialchars((string) $sale['sale_date'], ENT_QUOTES, 'UTF-8');
+$status_text = $sale['status'] === 'paid' ? 'پرداخت شده' : 'در انتظار پرداخت';
+$status_text = htmlspecialchars($status_text, ENT_QUOTES, 'UTF-8');
 ?>
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -79,7 +82,6 @@ $payment_text = $payment_methods[$sale['payment_method']] ?? $sale['payment_meth
             background: white;
             color: #333;
             direction: rtl;
-
         }
 
         .receipt {
@@ -194,34 +196,35 @@ $payment_text = $payment_methods[$sale['payment_method']] ?? $sale['payment_meth
         </div>
 
         <div class="sale-info">
-            <div><strong>مشتری:</strong> <?php echo $sale['customer_name'] ?: 'مشتری حضوری'; ?></div>
-            <div><strong>تاریخ:</strong> <?php echo $sale['sale_date']; ?></div>
+            <div><strong>مشتری:</strong> <?php echo $customer_name; ?></div>
+            <div><strong>تاریخ:</strong> <?php echo $sale_date; ?></div>
             <div><strong>روش پرداخت:</strong> <?php echo $payment_text; ?></div>
-            <div><strong>وضعیت:</strong> <?php echo $sale['status'] == 'paid' ? 'پرداخت شده' : 'در انتظار پرداخت'; ?></div>
+            <div><strong>وضعیت:</strong> <?php echo $status_text; ?></div>
         </div>
 
         <div class="items">
-            <?php while($item = $items->fetch_assoc()): ?>
-            <div class="item">
-                <div class="item-name">
-                    <?php echo $item['model_name']; ?><br>
-                    <small><?php echo $item['color'] . ' / ' . $item['size']; ?></small>
+            <?php foreach ($sale_items as $item): ?>
+                <div class="item">
+                    <div class="item-name">
+                        <div><?php echo $item['model_name']; ?></div>
+                        <div style="color: #666; font-size: 12px;">رنگ: <?php echo $item['color']; ?> | سایز: <?php echo $item['size']; ?></div>
+                    </div>
+                    <div class="item-details">
+                        <div><?php echo $item['quantity']; ?> عدد</div>
+                        <div><?php echo number_format($item['sell_price'], 0); ?> تومان</div>
+                        <div style="font-weight: 600;"><?php echo number_format($item['total'], 0); ?> تومان</div>
+                    </div>
                 </div>
-                <div class="item-details">
-                    <?php echo $item['quantity']; ?> × <?php echo number_format($item['sell_price'], 0); ?><br>
-                    <strong><?php echo number_format($item['quantity'] * $item['sell_price'], 0); ?> تومان</strong>
-                </div>
-            </div>
-            <?php endwhile; ?>
+            <?php endforeach; ?>
         </div>
 
         <div class="total">
-            <strong>مجموع کل: <?php echo number_format($total, 0); ?> تومان</strong>
+            مجموع کل: <?php echo number_format($total, 0); ?> تومان
         </div>
 
         <div class="footer">
-            <p>با تشکر از خرید شما</p>
-            <p>تاریخ چاپ: <?php echo date('Y-m-d H:i:s'); ?></p>
+            <p>از خرید شما سپاسگزاریم</p>
+            <p>لطفاً رسید را نزد خود نگه دارید</p>
         </div>
     </div>
 </body>
