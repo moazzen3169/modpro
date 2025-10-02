@@ -8,23 +8,45 @@ if (isset($_POST['create_sale'])) {
     $payment_method = $_POST['payment_method'];
     $status = $_POST['status'];
 
+    // Validate sale items quantities
+    $valid_items = [];
+    if (isset($_POST['items']) && is_array($_POST['items'])) {
+        foreach ($_POST['items'] as $item) {
+            $quantity = intval($item['quantity']);
+            if ($quantity <= 0) {
+                // Skip invalid items or handle error
+                continue; // Skip negative or zero quantities
+            }
+            $valid_items[] = [
+                'variant_id' => $item['variant_id'],
+                'quantity' => $quantity,
+                'sell_price' => $item['sell_price']
+            ];
+        }
+    }
+
+    // Only proceed if there are valid items
+    if (empty($valid_items)) {
+        // Redirect with error or handle
+        header('Location: sales.php?error=no_valid_items');
+        exit();
+    }
+
     // Insert sale
     $conn->query("INSERT INTO Sales (customer_id, sale_date, payment_method, status) VALUES ($customer_id, '$sale_date', '$payment_method', '$status')");
     $sale_id = $conn->insert_id;
 
     // Insert sale items and update stock
-    if (isset($_POST['items']) && is_array($_POST['items'])) {
-        foreach ($_POST['items'] as $item) {
-            $variant_id = $item['variant_id'];
-            $quantity = $item['quantity'];
-            $sell_price = $item['sell_price'];
+    foreach ($valid_items as $item) {
+        $variant_id = $item['variant_id'];
+        $quantity = $item['quantity'];
+        $sell_price = $item['sell_price'];
 
-            // Insert sale item
-            $conn->query("INSERT INTO Sale_Items (sale_id, variant_id, quantity, sell_price) VALUES ($sale_id, $variant_id, $quantity, $sell_price)");
+        // Insert sale item
+        $conn->query("INSERT INTO Sale_Items (sale_id, variant_id, quantity, sell_price) VALUES ($sale_id, $variant_id, $quantity, $sell_price)");
 
-            // Update stock
-            $conn->query("UPDATE Product_Variants SET stock = stock - $quantity WHERE variant_id = $variant_id");
-        }
+        // Update stock
+        $conn->query("UPDATE Product_Variants SET stock = stock - $quantity WHERE variant_id = $variant_id");
     }
 
     header('Location: sales.php');
@@ -35,8 +57,14 @@ if (isset($_POST['create_sale'])) {
 if (isset($_POST['add_sale_item'])) {
     $sale_id = $_POST['sale_id'];
     $variant_id = $_POST['variant_id'];
-    $quantity = $_POST['quantity'];
+    $quantity = intval($_POST['quantity']);
     $sell_price = $_POST['sell_price'];
+
+    if ($quantity <= 0) {
+        header('Location: sales.php?error=invalid_quantity');
+        exit();
+    }
+
     $conn->query("INSERT INTO Sale_Items (sale_id, variant_id, quantity, sell_price) VALUES ($sale_id, $variant_id, $quantity, $sell_price)");
     // Update stock
     $conn->query("UPDATE Product_Variants SET stock = stock - $quantity WHERE variant_id = $variant_id");
@@ -60,8 +88,13 @@ if (isset($_POST['edit_sale'])) {
 if (isset($_POST['edit_sale_item'])) {
     $sale_item_id = $_POST['sale_item_id'];
     $variant_id = $_POST['variant_id'];
-    $quantity = $_POST['quantity'];
+    $quantity = intval($_POST['quantity']);
     $sell_price = $_POST['sell_price'];
+
+    if ($quantity <= 0) {
+        header('Location: sales.php?error=invalid_quantity');
+        exit();
+    }
 
     // Get old quantity to adjust stock
     $old_item = $conn->query("SELECT variant_id, quantity FROM Sale_Items WHERE sale_item_id=$sale_item_id")->fetch_assoc();
@@ -975,7 +1008,7 @@ $sales = $conn->query("SELECT s.*, c.name as customer_name, COUNT(si.sale_item_i
             itemDiv.innerHTML = `
                 <div class="flex-1">
                     <h5 class="font-medium text-gray-800">${item.productName}</h5>
-                    <div class="text-sm text-gray-500">تعداد: ${item.quantity} × ${item.price.toLocaleString()} تومان</div>
+                    <div class="text-sm text-gray-500">تعداد: ${Math.max(0, item.quantity)} × ${item.price.toLocaleString()} تومان</div>
                 </div>
                 <div class="text-left">
                     <div class="font-bold text-gray-800">${item.total.toLocaleString()} تومان</div>

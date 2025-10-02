@@ -23,7 +23,7 @@ if (isset($_GET['sale_id'])) {
                             <p class="text-sm text-gray-500">' . $item['color'] . ' / ' . $item['size'] . '</p>
                         </div>
                         <div class="text-left">
-                            <p class="text-sm text-gray-600">تعداد: ' . $item['quantity'] . '</p>
+                            <p class="text-sm text-gray-600">تعداد: ' . max(0, $item['quantity']) . '</p>
                             <p class="text-sm text-gray-600">قیمت فروش: ' . number_format($item['sell_price'], 0) . ' تومان</p>
                             <p class="font-medium text-gray-800">مجموع: ' . number_format($item['quantity'] * $item['sell_price'], 0) . ' تومان</p>
                         </div>

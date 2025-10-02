@@ -1,6 +1,7 @@
-# TODO: Fix Duplicate Data Saving Issue
+# TODO: Prevent Negative Quantities in Sales Form
 
-## Steps to Complete
-- [x] Update products.php: Add redirect after successful POST operations to prevent resubmission
-- [ ] Update sales.php: Add redirect after successful POST operations to prevent resubmission
-- [ ] Test the forms to ensure no duplicate entries on refresh
+- [x] Add server-side validation in create_sale POST handler to reject negative or zero quantities
+- [x] Add server-side validation in add_sale_item POST handler to reject negative or zero quantities
+- [x] Add server-side validation in edit_sale_item POST handler to reject negative or zero quantities
+- [x] In display code, ensure no negative quantities are shown (replace with zero or hide)
+- [x] In JavaScript addItemToSale() function, add check to prevent adding items with negative or zero quantity
