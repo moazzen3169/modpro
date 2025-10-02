@@ -61,6 +61,26 @@ CREATE TABLE Sale_Items (
     FOREIGN KEY (variant_id) REFERENCES Product_Variants(variant_id) ON DELETE CASCADE
 );
 
+-- Returns table
+CREATE TABLE Returns (
+    return_id INT AUTO_INCREMENT PRIMARY KEY,
+    customer_id INT DEFAULT 0, -- 0 for walk-in customers
+    return_date DATE NOT NULL,
+    reason TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Return Items table
+CREATE TABLE Return_Items (
+    return_item_id INT AUTO_INCREMENT PRIMARY KEY,
+    return_id INT NOT NULL,
+    variant_id INT NOT NULL,
+    quantity INT NOT NULL,
+    return_price DECIMAL(10,2) NOT NULL,
+    FOREIGN KEY (return_id) REFERENCES Returns(return_id) ON DELETE CASCADE,
+    FOREIGN KEY (variant_id) REFERENCES Product_Variants(variant_id) ON DELETE CASCADE
+);
+
 -- Insert some sample data
 INSERT INTO Customers (name, phone, email) VALUES
 ('مشتری نمونه ۱', '09123456789', 'customer1@example.com'),
