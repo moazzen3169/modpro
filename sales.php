@@ -160,6 +160,12 @@ $products = $conn->query("SELECT * FROM Products ORDER BY model_name");
     <title>مدیریت فروش‌ها - SuitStore Manager Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/feather-icons"></script>
+
+    <!-- jQuery and DataTables CSS/JS -->
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/plug-ins/1.13.4/i18n/fa.json"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@100;200;300;400;500;600;700;800;900&display=swap');
         
@@ -202,6 +208,24 @@ $products = $conn->query("SELECT * FROM Products ORDER BY model_name");
         
         @keyframes slideIn {
             from { transform: translateY(-10px); opacity: 0; }
+        
+        @keyframes slideIn {
+            from { transform: translateY(-10px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        
+        .modal-fade {
+            animation: fadeIn 0.2s ease-out;
+        }
+        
+        .modal-slide {
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        /* Loading spinner */
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
             to { transform: translateY(0); opacity: 1; }
         }
         
@@ -281,7 +305,14 @@ $products = $conn->query("SELECT * FROM Products ORDER BY model_name");
         .size-option.disabled:hover {
             border-color: #e5e7eb;
         }
+
+
+
+
+
+
     </style>
+        
 </head>
 <body class="bg-gray-50">
     <div class="flex h-screen overflow-hidden">
@@ -401,76 +432,88 @@ $products = $conn->query("SELECT * FROM Products ORDER BY model_name");
                             </button>
                         </div>
                         <div class="flex items-center space-x-2 space-x-reverse">
+                            <!-- Removed Export to Excel button as per user request -->
+                            <!--
                             <button id="exportBtn" class="flex items-center px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors">
                                 <i data-feather="download" class="ml-2 w-4 h-4"></i>
                                 <span>خروجی Excel</span>
                             </button>
+                            -->
                         </div>
                     </div>
                 </div>
 
                 <!-- Sales List -->
-                <div class="space-y-4" id="salesList">
-                    <?php
-$sales = $conn->query("SELECT s.*, c.name as customer_name, COUNT(si.sale_item_id) as item_count, SUM(si.quantity * si.sell_price) as total_amount FROM Sales s LEFT JOIN Customers c ON s.customer_id = c.customer_id LEFT JOIN Sale_Items si ON s.sale_id = si.sale_id GROUP BY s.sale_id ORDER BY s.sale_date DESC, s.sale_id DESC");
-                    
-                    if ($sales->num_rows > 0) {
-                        while($sale = $sales->fetch_assoc()){
-                            $status_color = $sale['status'] == 'paid' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
-                            $payment_icon = $sale['payment_method'] == 'cash' ? 'dollar-sign' : ($sale['payment_method'] == 'credit_card' ? 'credit-card' : 'repeat');
-                            
-                            echo "<div class='sale-card bg-white p-6 rounded-xl shadow-sm border border-gray-100 transition-all duration-300'>
-                                    <div class='flex flex-col md:flex-row md:items-center md:justify-between gap-4'>
-                                        <div class='flex-1'>
-                                            <div class='flex items-center space-x-3 space-x-reverse mb-2'>
-                                                <h3 class='font-semibold text-gray-800'>#فروش-".$sale['sale_id']."</h3>
-                                                <span class='status-badge px-2 py-1 text-xs font-semibold rounded-full $status_color'>".($sale['status'] == 'paid' ? 'پرداخت شده' : 'در انتظار پرداخت')."</span>
-                                            </div>
-                                            <div class='text-sm text-gray-500 flex items-center space-x-2 space-x-reverse'>
-                                                <span class='font-medium'>".($sale['customer_name'] ?: 'مشتری حضوری')."</span>
-                                                <span>•</span>
-                                                <span>".$sale['sale_date']."</span>
-                                                <span>•</span>
-                                                <span class='flex items-center'>
+                <div class="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
+                    <table id="salesTable" class="w-full text-sm text-gray-900">
+                        <thead class="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-300">
+                            <tr>
+                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">شماره فروش</th>
+                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">مشتری</th>
+                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">تاریخ</th>
+                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">روش پرداخت</th>
+                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">وضعیت</th>
+                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">تعداد آیتم</th>
+                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">مجموع</th>
+                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">عملیات</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-100">
+                            <?php
+                            $sales = $conn->query("SELECT s.*, c.name as customer_name, COUNT(si.sale_item_id) as item_count, SUM(si.quantity * si.sell_price) as total_amount FROM Sales s LEFT JOIN Customers c ON s.customer_id = c.customer_id LEFT JOIN Sale_Items si ON s.sale_id = si.sale_id GROUP BY s.sale_id ORDER BY s.sale_date DESC, s.sale_id DESC");
+
+                            if ($sales->num_rows > 0) {
+                                while($sale = $sales->fetch_assoc()){
+                                    $status_color = $sale['status'] == 'paid' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
+                                    $payment_icon = $sale['payment_method'] == 'cash' ? 'dollar-sign' : ($sale['payment_method'] == 'credit_card' ? 'credit-card' : 'repeat');
+                                    $payment_text = $sale['payment_method'] == 'cash' ? 'نقدی' : ($sale['payment_method'] == 'credit_card' ? 'کارت اعتباری' : 'انتقال بانکی');
+
+                                    echo "<tr class='hover:bg-gray-50'>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>#فروش-{$sale['sale_id']}</td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>".($sale['customer_name'] ?: 'مشتری حضوری')."</td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$sale['sale_date']}</td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                                                <div class='flex items-center'>
                                                     <i data-feather='$payment_icon' class='w-4 h-4 ml-1'></i>
-                                                    ".($sale['payment_method'] == 'cash' ? 'نقدی' : ($sale['payment_method'] == 'credit_card' ? 'کارت اعتباری' : 'انتقال بانکی'))."
-                                                </span>
-                                            </div>
-                                        </div>
-                                        <div class='flex items-center space-x-4 space-x-reverse'>
-                                            <div class='text-left'>
-                                                <div class='text-lg font-bold text-gray-800'>".number_format($sale['total_amount'], 0)." تومان</div>
-                                                <div class='text-sm text-gray-500'>".$sale['item_count']." آیتم</div>
-                                            </div>
-                                            <div class='flex space-x-2 space-x-reverse'>
-                                                <button onclick='printReceipt({$sale['sale_id']})' class='p-2 bg-green-100 rounded-lg text-green-600 hover:bg-green-200 transition-colors'>
-                                                    <i data-feather='printer' class='w-4 h-4'></i>
-                                                </button>
-                                                <button onclick='openEditSaleModal({$sale['sale_id']}, {$sale['customer_id']}, \"{$sale['sale_date']}\", \"{$sale['payment_method']}\", \"{$sale['status']}\")' class='p-2 bg-yellow-100 rounded-lg text-yellow-600 hover:bg-yellow-200 transition-colors'>
-                                                    <i data-feather='edit' class='w-4 h-4'></i>
-                                                </button>
-                                                <a href='?delete_sale={$sale['sale_id']}' onclick='return confirm(\"آیا مطمئن هستید که می‌خواهید این فروش را حذف کنید؟\")' class='p-2 bg-red-100 rounded-lg text-red-600 hover:bg-red-200 transition-colors'>
-                                                    <i data-feather='trash-2' class='w-4 h-4'></i>
-                                                </a>
-                                                <button onclick='showSaleItems({$sale['sale_id']})' class='p-2 bg-blue-100 rounded-lg text-blue-600 hover:bg-blue-200 transition-colors'>
-                                                    <i data-feather='eye' class='w-4 h-4'></i>
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>";
-                        }
-                    } else {
-                        echo "<div class='bg-white p-8 rounded-xl shadow-sm border border-gray-100 text-center'>
-                                <i data-feather='shopping-cart' class='w-12 h-12 text-gray-400 mx-auto mb-4'></i>
-                                <h3 class='text-lg font-medium text-gray-700 mb-2'>هنوز فروشی ثبت نشده است</h3>
-                                <p class='text-gray-500 mb-4'>برای شروع، اولین فروش خود را ثبت کنید</p>
-                                <button onclick='openModal(\"newSaleModal\")' class='px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors'>
-                                    ایجاد اولین فروش
-                                </button>
-                            </div>";
-                    }
-                    ?>
+                                                    $payment_text
+                                                </div>
+                                            </td>
+                                            <td class='px-6 py-4 whitespace-nowrap'>
+                                                <span class='px-2 py-1 text-xs font-semibold rounded-full $status_color'>".($sale['status'] == 'paid' ? 'پرداخت شده' : 'در انتظار پرداخت')."</span>
+                                            </td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$sale['item_count']}</td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900'>".number_format($sale['total_amount'], 0)." تومان</td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm font-medium'>
+                                                <div class='flex space-x-2 space-x-reverse'>
+                                                    <button onclick='printReceipt({$sale['sale_id']})' class='p-1 bg-green-100 rounded text-green-600 hover:bg-green-200 transition-colors' title='چاپ رسید'>
+                                                        <i data-feather='printer' class='w-4 h-4'></i>
+                                                    </button>
+                                                    <button onclick='openEditSaleModal({$sale['sale_id']}, {$sale['customer_id']}, \"{$sale['sale_date']}\", \"{$sale['payment_method']}\", \"{$sale['status']}\")' class='p-1 bg-yellow-100 rounded text-yellow-600 hover:bg-yellow-200 transition-colors' title='ویرایش'>
+                                                        <i data-feather='edit' class='w-4 h-4'></i>
+                                                    </button>
+                                                    <a href='?delete_sale={$sale['sale_id']}' onclick='return confirm(\"آیا مطمئن هستید که می‌خواهید این فروش را حذف کنید؟\")' class='p-1 bg-red-100 rounded text-red-600 hover:bg-red-200 transition-colors' title='حذف'>
+                                                        <i data-feather='trash-2' class='w-4 h-4'></i>
+                                                    </a>
+                                                    <button onclick='showSaleItems({$sale['sale_id']})' class='p-1 bg-blue-100 rounded text-blue-600 hover:bg-blue-200 transition-colors' title='مشاهده آیتم‌ها'>
+                                                        <i data-feather='eye' class='w-4 h-4'></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>";
+                                }
+                            } else {
+                                echo "<tr><td colspan='8' class='px-6 py-8 text-center'>
+                                        <i data-feather='shopping-cart' class='w-12 h-12 text-gray-400 mx-auto mb-4'></i>
+                                        <h3 class='text-lg font-medium text-gray-700 mb-2'>هنوز فروشی ثبت نشده است</h3>
+                                        <p class='text-gray-500 mb-4'>برای شروع، اولین فروش خود را ثبت کنید</p>
+                                        <button onclick='openModal(\"newSaleModal\")' class='px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors'>
+                                            ایجاد اولین فروش
+                                        </button>
+                                    </td></tr>";
+                            }
+                            ?>
+                        </tbody>
+                    </table>
                 </div>
 
                 <!-- New Sale Modal -->
@@ -628,12 +671,14 @@ $sales = $conn->query("SELECT s.*, c.name as customer_name, COUNT(si.sale_item_i
                                     <div>
                                         <label class="block text-sm font-medium text-gray-700 mb-1">مشتری</label>
                                         <select name="customer_id" id="edit_customer_id" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                            
                                             <?php
                                             $customers = $conn->query("SELECT * FROM Customers");
                                             while($customer = $customers->fetch_assoc()){
                                                 echo "<option value='{$customer['customer_id']}'>{$customer['name']}</option>";
                                             }
                                             ?>
+
                                         </select>
                                     </div>
                                     <div>
@@ -643,8 +688,8 @@ $sales = $conn->query("SELECT s.*, c.name as customer_name, COUNT(si.sale_item_i
                                     <div>
                                         <label class="block text-sm font-medium text-gray-700 mb-1">روش پرداخت</label>
                                         <select name="payment_method" id="edit_payment_method" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                            <option value="cash">نقدی</option>
                                             <option value="credit_card">کارت اعتباری</option>
+                                            <option value="cash">نقدی</option>
                                             <option value="bank_transfer">انتقال بانکی</option>
                                         </select>
                                     </div>
@@ -850,11 +895,11 @@ $sales = $conn->query("SELECT s.*, c.name as customer_name, COUNT(si.sale_item_i
             document.getElementById('sizeOptions').innerHTML = '<div class="col-span-6 flex justify-center"><div class="spinner"></div><span class="mr-2 text-gray-600">در حال بارگذاری...</span></div>';
             document.getElementById('sizeSelection').classList.remove('hidden');
             document.getElementById('quantitySelection').classList.add('hidden');
-            
+
             // Filter variants by product and color
             const availableSizes = [];
             const sizeMap = {};
-            
+
             currentVariants.forEach(variant => {
                 if (variant.product_id == productId && variant.color === color) {
                     if (!sizeMap[variant.size]) {
@@ -867,41 +912,45 @@ $sales = $conn->query("SELECT s.*, c.name as customer_name, COUNT(si.sale_item_i
                     }
                 }
             });
-            
-            // Convert to array
+
+            // Convert to array and sort by size order
             Object.values(sizeMap).forEach(sizeInfo => {
                 availableSizes.push(sizeInfo);
             });
-            
+
+            // Sort sizes in logical order
+            const sizeOrder = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
+            availableSizes.sort((a, b) => sizeOrder.indexOf(a.size) - sizeOrder.indexOf(b.size));
+
             // Display sizes
             const sizeOptions = document.getElementById('sizeOptions');
             sizeOptions.innerHTML = '';
-            
+
             if (availableSizes.length === 0) {
-                sizeOptions.innerHTML = '<p class="col-span-6 text-gray-500">هیچ سایزی برای این رنگ موجود نیست</p>';
+                sizeOptions.innerHTML = '<p class="col-span-6 text-gray-500 text-center py-4">هیچ سایزی برای این رنگ موجود نیست</p>';
                 return;
             }
-            
-            // Define all possible sizes
-            const allSizes = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
-            
-            allSizes.forEach(size => {
-                const sizeInfo = availableSizes.find(s => s.size === size);
+
+            // Only show available sizes
+            availableSizes.forEach(sizeInfo => {
                 const sizeOption = document.createElement('div');
-                sizeOption.className = `size-option ${sizeInfo ? '' : 'disabled'}`;
-                sizeOption.textContent = size;
-                
-                if (sizeInfo) {
-                    sizeOption.setAttribute('data-size', size);
-                    sizeOption.setAttribute('data-stock', sizeInfo.stock);
-                    sizeOption.setAttribute('data-price', sizeInfo.price);
-                    sizeOption.setAttribute('data-variant-id', sizeInfo.variant_id);
-                    
-                    sizeOption.addEventListener('click', function() {
-                        selectSize(size, sizeInfo.stock, sizeInfo.price, sizeInfo.variant_id);
-                    });
-                }
-                
+                sizeOption.className = 'size-option';
+                sizeOption.textContent = sizeInfo.size;
+                sizeOption.setAttribute('data-size', sizeInfo.size);
+                sizeOption.setAttribute('data-stock', sizeInfo.stock);
+                sizeOption.setAttribute('data-price', sizeInfo.price);
+                sizeOption.setAttribute('data-variant-id', sizeInfo.variant_id);
+
+                // Add stock indicator
+                const stockIndicator = document.createElement('div');
+                stockIndicator.className = 'text-xs text-gray-500 mt-1';
+                stockIndicator.textContent = `موجودی: ${sizeInfo.stock}`;
+                sizeOption.appendChild(stockIndicator);
+
+                sizeOption.addEventListener('click', function() {
+                    selectSize(sizeInfo.size, sizeInfo.stock, sizeInfo.price, sizeInfo.variant_id);
+                });
+
                 sizeOptions.appendChild(sizeOption);
             });
         }
@@ -1197,6 +1246,18 @@ $sales = $conn->query("SELECT s.*, c.name as customer_name, COUNT(si.sale_item_i
                 this.innerHTML = originalText;
                 this.disabled = false;
             }, 1500);
+        });
+
+        // Initialize DataTables
+        $(document).ready(function() {
+            $('#salesTable').DataTable({
+                "language": {
+                    "url": "https://cdn.datatables.net/plug-ins/1.13.4/i18n/fa.json"
+                },
+                "pageLength": 25,
+                "responsive": true,
+                "order": [[ 2, "desc" ]] // Sort by date descending
+            });
         });
     </script>
 </body>

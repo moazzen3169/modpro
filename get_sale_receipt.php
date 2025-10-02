@@ -1,11 +1,14 @@
-    <?php
+<?php
 include 'env/db.php';
 
-if (!isset($_GET['sale_id'])) {
-    die('Sale ID not provided');
+if (!isset($_GET['sale_id']) || !is_numeric($_GET['sale_id'])) {
+    die('<div style="text-align: center; padding: 50px; font-family: Arial, sans-serif;">
+            <h2 style="color: #e74c3c;">خطا</h2>
+            <p>شناسه فروش نامعتبر است.</p>
+         </div>');
 }
 
-$sale_id = $_GET['sale_id'];
+$sale_id = intval($_GET['sale_id']);
 
 // Get sale details
 $sale = $conn->query("
@@ -16,7 +19,10 @@ $sale = $conn->query("
 ")->fetch_assoc();
 
 if (!$sale) {
-    die('Sale not found');
+    die('<div style="text-align: center; padding: 50px; font-family: Arial, sans-serif;">
+            <h2 style="color: #e74c3c;">خطا</h2>
+            <p>فروش با شماره ' . $sale_id . ' یافت نشد.</p>
+         </div>');
 }
 
 // Get sale items
@@ -28,13 +34,25 @@ $items = $conn->query("
     WHERE si.sale_id = $sale_id
 ");
 
-// Calculate total
+$sale_items = [];
 $total = 0;
+$item_count = 0;
+
 while($item = $items->fetch_assoc()){
-    $total += $item['quantity'] * $item['sell_price'];
+    $total += intval($item['quantity']) * floatval($item['sell_price']);
     $sale_items[] = $item;
+    $item_count++;
 }
+
 $items->data_seek(0); // Reset pointer
+
+// If no items found, show error
+if ($item_count == 0) {
+    die('<div style="text-align: center; padding: 50px; font-family: Arial, sans-serif;">
+            <h2 style="color: #f39c12;">اطلاعات ناقص</h2>
+            <p>هیچ آیتمی برای فروش شماره ' . $sale_id . ' یافت نشد.</p>
+         </div>');
+}
 
 // Payment method text
 $payment_methods = [
