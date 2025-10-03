@@ -113,6 +113,34 @@ CREATE TABLE Purchase_Items (
     FOREIGN KEY (variant_id) REFERENCES Product_Variants(variant_id) ON DELETE CASCADE
 );
 
+-- Purchase Returns table (returned goods to suppliers)
+CREATE TABLE Purchase_Returns (
+    purchase_return_id INT AUTO_INCREMENT PRIMARY KEY,
+    purchase_id INT NULL,
+    supplier_id INT NOT NULL,
+    return_date DATE NOT NULL,
+    total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+    note TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (purchase_id) REFERENCES Purchases(purchase_id) ON DELETE SET NULL,
+    FOREIGN KEY (supplier_id) REFERENCES Suppliers(supplier_id) ON DELETE CASCADE
+);
+
+-- Supplier Balances table (opening and closing debt per supplier per month)
+CREATE TABLE Supplier_Balances (
+    balance_id INT AUTO_INCREMENT PRIMARY KEY,
+    supplier_id INT NOT NULL,
+    balance_year INT NOT NULL,
+    balance_month INT NOT NULL,
+    opening_balance DECIMAL(15,2) NOT NULL DEFAULT 0,
+    total_purchases DECIMAL(15,2) NOT NULL DEFAULT 0,
+    total_returns DECIMAL(15,2) NOT NULL DEFAULT 0,
+    closing_balance DECIMAL(15,2) NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY supplier_month (supplier_id, balance_year, balance_month),
+    FOREIGN KEY (supplier_id) REFERENCES Suppliers(supplier_id) ON DELETE CASCADE
+);
+
 -- Insert some sample data
 INSERT INTO Customers (name, phone, email) VALUES
 ('مشتری نمونه ۱', '09123456789', 'customer1@example.com'),

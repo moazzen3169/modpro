@@ -3,20 +3,266 @@ require_once __DIR__ . '/env/bootstrap.php';
 
 $flash_messages = get_flash_messages();
 
-// Query to get purchases grouped by year and month with summary
-$purchasesByMonthQuery = "
-    SELECT
-        YEAR(p.purchase_date) AS purchase_year,
-        MONTH(p.purchase_date) AS purchase_month,
-        COUNT(DISTINCT p.purchase_id) AS purchases_count,
-        SUM(pi.quantity * pi.buy_price) AS total_amount
-    FROM Purchases p
-    JOIN Purchase_Items pi ON p.purchase_id = pi.purchase_id
-    GROUP BY purchase_year, purchase_month
-    ORDER BY purchase_year DESC, purchase_month DESC
-";
+/**
+ * Get the most recent closing balance before the requested month for a supplier.
+ */
+function get_previous_closing_balance(mysqli $conn, int $supplierId, int $year, int $month): float
+{
+    $stmt = $conn->prepare(
+        'SELECT closing_balance FROM Supplier_Balances
+         WHERE supplier_id = ?
+           AND (balance_year < ? OR (balance_year = ? AND balance_month < ?))
+         ORDER BY balance_year DESC, balance_month DESC
+         LIMIT 1'
+    );
+    if (!$stmt) {
+        return 0.0;
+    }
 
-$purchasesByMonthResult = $conn->query($purchasesByMonthQuery);
+    $stmt->bind_param('iiii', $supplierId, $year, $year, $month);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $row = $result ? $result->fetch_assoc() : null;
+    $stmt->close();
+
+    if ($row) {
+        return (float) $row['closing_balance'];
+    }
+
+    return 0.0;
+}
+
+/**
+ * Update or create the balance snapshot for a supplier/month combination.
+ *
+ * @return array{opening_balance: float, closing_balance: float}
+ */
+function upsert_supplier_balance(
+    mysqli $conn,
+    int $supplierId,
+    int $year,
+    int $month,
+    float $grossPurchases,
+    float $totalReturns
+): array {
+    $stmt = $conn->prepare(
+        'SELECT balance_id FROM Supplier_Balances WHERE supplier_id = ? AND balance_year = ? AND balance_month = ?'
+    );
+    if (!$stmt) {
+        $openingBalance = get_previous_closing_balance($conn, $supplierId, $year, $month);
+        $closingBalance = $openingBalance + $grossPurchases - $totalReturns;
+
+        return [
+            'opening_balance' => $openingBalance,
+            'closing_balance' => $closingBalance,
+        ];
+    }
+
+    $stmt->bind_param('iii', $supplierId, $year, $month);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $existing = $result ? $result->fetch_assoc() : null;
+    $stmt->close();
+
+    $openingBalance = get_previous_closing_balance($conn, $supplierId, $year, $month);
+    $closingBalance = $openingBalance + $grossPurchases - $totalReturns;
+
+    if ($existing) {
+        $balanceId = (int) $existing['balance_id'];
+        $updateStmt = $conn->prepare(
+            'UPDATE Supplier_Balances
+             SET opening_balance = ?, total_purchases = ?, total_returns = ?, closing_balance = ?, updated_at = NOW()
+             WHERE balance_id = ?'
+        );
+        if ($updateStmt) {
+            $updateStmt->bind_param('ddddi', $openingBalance, $grossPurchases, $totalReturns, $closingBalance, $balanceId);
+            $updateStmt->execute();
+            $updateStmt->close();
+        }
+    } else {
+        $insertStmt = $conn->prepare(
+            'INSERT INTO Supplier_Balances (supplier_id, balance_year, balance_month, opening_balance, total_purchases, total_returns, closing_balance)
+             VALUES (?, ?, ?, ?, ?, ?, ?)'
+        );
+        if ($insertStmt) {
+            $insertStmt->bind_param('iiidddd', $supplierId, $year, $month, $openingBalance, $grossPurchases, $totalReturns, $closingBalance);
+            $insertStmt->execute();
+            $insertStmt->close();
+        }
+    }
+
+    return [
+        'opening_balance' => $openingBalance,
+        'closing_balance' => $closingBalance,
+    ];
+}
+
+/**
+ * Fetch per-supplier purchase aggregates for each month.
+ *
+ * @return array<int, array<string, mixed>>
+ */
+function get_monthly_supplier_entries(mysqli $conn): array
+{
+    $entries = [];
+
+    $purchaseSql = "
+        SELECT
+            YEAR(p.purchase_date) AS purchase_year,
+            MONTH(p.purchase_date) AS purchase_month,
+            p.supplier_id,
+            s.name AS supplier_name,
+            COUNT(DISTINCT p.purchase_id) AS purchases_count,
+            SUM(pi.quantity * pi.buy_price) AS gross_purchases
+        FROM Purchases p
+        JOIN Purchase_Items pi ON p.purchase_id = pi.purchase_id
+        JOIN Suppliers s ON p.supplier_id = s.supplier_id
+        GROUP BY purchase_year, purchase_month, p.supplier_id, s.name
+    ";
+
+    if ($purchaseResult = $conn->query($purchaseSql)) {
+        while ($row = $purchaseResult->fetch_assoc()) {
+            $year = (int) $row['purchase_year'];
+            $month = (int) $row['purchase_month'];
+            $supplierId = (int) $row['supplier_id'];
+            $key = sprintf('%d-%d-%d', $year, $month, $supplierId);
+
+            $entries[$key] = [
+                'year' => $year,
+                'month' => $month,
+                'supplier_id' => $supplierId,
+                'supplier_name' => $row['supplier_name'],
+                'purchases_count' => (int) $row['purchases_count'],
+                'gross_purchases' => (float) ($row['gross_purchases'] ?? 0),
+                'total_returns' => 0.0,
+            ];
+        }
+        $purchaseResult->free();
+    }
+
+    $returnsSql = "
+        SELECT
+            YEAR(pr.return_date) AS return_year,
+            MONTH(pr.return_date) AS return_month,
+            pr.supplier_id,
+            s.name AS supplier_name,
+            SUM(pr.total_amount) AS total_returns
+        FROM Purchase_Returns pr
+        JOIN Suppliers s ON pr.supplier_id = s.supplier_id
+        GROUP BY return_year, return_month, pr.supplier_id, s.name
+    ";
+
+    if ($returnsResult = $conn->query($returnsSql)) {
+        while ($row = $returnsResult->fetch_assoc()) {
+            $year = (int) $row['return_year'];
+            $month = (int) $row['return_month'];
+            $supplierId = (int) $row['supplier_id'];
+            $key = sprintf('%d-%d-%d', $year, $month, $supplierId);
+
+            if (!isset($entries[$key])) {
+                $entries[$key] = [
+                    'year' => $year,
+                    'month' => $month,
+                    'supplier_id' => $supplierId,
+                    'supplier_name' => $row['supplier_name'],
+                    'purchases_count' => 0,
+                    'gross_purchases' => 0.0,
+                    'total_returns' => 0.0,
+                ];
+            }
+
+            $entries[$key]['total_returns'] += (float) ($row['total_returns'] ?? 0);
+        }
+        $returnsResult->free();
+    }
+
+    return array_values($entries);
+}
+
+/**
+ * Build month level summaries with supplier breakdowns and balances.
+ *
+ * @return array<int, array<string, mixed>>
+ */
+function build_monthly_summaries(mysqli $conn): array
+{
+    $entries = get_monthly_supplier_entries($conn);
+
+    if ($entries === []) {
+        return [];
+    }
+
+    usort($entries, function (array $a, array $b): int {
+        $aKey = ($a['year'] * 12) + $a['month'];
+        $bKey = ($b['year'] * 12) + $b['month'];
+
+        if ($aKey === $bKey) {
+            return $a['supplier_id'] <=> $b['supplier_id'];
+        }
+
+        return $aKey <=> $bKey;
+    });
+
+    $months = [];
+
+    foreach ($entries as $entry) {
+        $balances = upsert_supplier_balance(
+            $conn,
+            $entry['supplier_id'],
+            $entry['year'],
+            $entry['month'],
+            $entry['gross_purchases'],
+            $entry['total_returns']
+        );
+
+        $entry['opening_balance'] = $balances['opening_balance'];
+        $entry['closing_balance'] = $balances['closing_balance'];
+        $entry['net_change'] = $entry['closing_balance'] - $entry['opening_balance'];
+
+        $monthKey = sprintf('%04d-%02d', $entry['year'], $entry['month']);
+
+        if (!isset($months[$monthKey])) {
+            $months[$monthKey] = [
+                'year' => $entry['year'],
+                'month' => $entry['month'],
+                'purchases_count' => 0,
+                'gross_purchases' => 0.0,
+                'total_returns' => 0.0,
+                'opening_balance' => 0.0,
+                'closing_balance' => 0.0,
+                'suppliers' => [],
+            ];
+        }
+
+        $months[$monthKey]['purchases_count'] += $entry['purchases_count'];
+        $months[$monthKey]['gross_purchases'] += $entry['gross_purchases'];
+        $months[$monthKey]['total_returns'] += $entry['total_returns'];
+        $months[$monthKey]['opening_balance'] += $entry['opening_balance'];
+        $months[$monthKey]['closing_balance'] += $entry['closing_balance'];
+
+        $months[$monthKey]['suppliers'][] = $entry;
+    }
+
+    $monthsList = array_values($months);
+
+    foreach ($monthsList as &$month) {
+        $month['net_change'] = $month['closing_balance'] - $month['opening_balance'];
+        $month['net_purchases'] = $month['gross_purchases'] - $month['total_returns'];
+        usort($month['suppliers'], function (array $a, array $b): int {
+            return strcmp($a['supplier_name'], $b['supplier_name']);
+        });
+    }
+    unset($month);
+
+    usort($monthsList, function (array $a, array $b): int {
+        $aKey = ($a['year'] * 12) + $a['month'];
+        $bKey = ($b['year'] * 12) + $b['month'];
+
+        return $bKey <=> $aKey;
+    });
+
+    return $monthsList;
+}
 
 function get_month_name(int $month): string {
     $months = [
@@ -70,6 +316,8 @@ function get_purchase_details(mysqli $conn, int $year, int $month): array {
 
     return $details;
 }
+
+$monthlySummaries = build_monthly_summaries($conn);
 ?>
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -83,22 +331,28 @@ function get_purchase_details(mysqli $conn, int $year, int $month): array {
         body {
             font-family: 'Vazirmatn', sans-serif;
         }
-        .details-table {
-            max-height: 300px;
-            overflow-y: auto;
+        .summary-table {
+            overflow-x: auto;
         }
+        .summary-table table,
         .details-table table {
             width: 100%;
             border-collapse: collapse;
         }
+        .summary-table th, .summary-table td,
         .details-table th, .details-table td {
             border: 1px solid #ddd;
             padding: 8px;
             text-align: right;
         }
+        .summary-table th,
         .details-table th {
             background-color: #f3f4f6;
             font-weight: 600;
+        }
+        .details-table {
+            max-height: 300px;
+            overflow-y: auto;
         }
         .month-summary {
             margin-bottom: 1.5rem;
@@ -202,27 +456,86 @@ function get_purchase_details(mysqli $conn, int $year, int $month): array {
                 </div>
             <?php endif; ?>
 
-            <?php if ($purchasesByMonthResult === false || $purchasesByMonthResult->num_rows === 0): ?>
+            <?php if (empty($monthlySummaries)): ?>
                 <p class="text-gray-600">هیچ خریدی ثبت نشده است.</p>
             <?php else: ?>
-                <?php while ($month = $purchasesByMonthResult->fetch_assoc()): ?>
+                <?php foreach ($monthlySummaries as $month): ?>
                     <?php
-                        $year = (int) $month['purchase_year'];
-                        $monthNum = (int) $month['purchase_month'];
+                        $year = (int) $month['year'];
+                        $monthNum = (int) $month['month'];
                         $purchasesCount = (int) $month['purchases_count'];
-                        $totalAmount = (float) $month['total_amount'];
+                        $grossPurchases = (float) $month['gross_purchases'];
+                        $returnsAmount = (float) $month['total_returns'];
+                        $openingBalance = (float) $month['opening_balance'];
+                        $closingBalance = (float) $month['closing_balance'];
+                        $netChange = (float) $month['net_change'];
                         $monthName = get_month_name($monthNum);
                         $details = get_purchase_details($conn, $year, $monthNum);
                     ?>
                     <div class="month-summary" id="month-summary-<?php echo $year . '-' . $monthNum; ?>">
                         <div class="month-header" onclick="toggleDetails('<?php echo $year . '-' . $monthNum; ?>')">
-                            <span><?php echo "{$monthName} {$year}"; ?> (<?php echo $purchasesCount; ?> خرید)</span>
+                            <div class="flex flex-col sm:flex-row sm:items-center sm:gap-4">
+                                <span><?php echo "{$monthName} {$year}"; ?> (<?php echo $purchasesCount; ?> خرید)</span>
+                                <span class="text-sm text-gray-500">خالص بدهی: <?php echo number_format($netChange, 0); ?> تومان</span>
+                            </div>
                             <svg class="toggle-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" >
                                 <polyline points="6 9 12 15 18 9"></polyline>
                             </svg>
                         </div>
                         <div class="month-details hidden p-4">
-                            <div class="details-table">
+                            <div class="summary-table">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>خرید ناخالص</th>
+                                            <th>مرجوعی‌ها</th>
+                                            <th>بدهی قبلی</th>
+                                            <th>بدهی جدید</th>
+                                            <th>مانده پایان ماه</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><?php echo number_format($grossPurchases, 0); ?></td>
+                                            <td><?php echo number_format($returnsAmount, 0); ?></td>
+                                            <td><?php echo number_format($openingBalance, 0); ?></td>
+                                            <td><?php echo number_format($netChange, 0); ?></td>
+                                            <td><?php echo number_format($closingBalance, 0); ?></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <?php if (!empty($month['suppliers'])): ?>
+                                <div class="summary-table mt-4">
+                                    <table>
+                                        <thead>
+                                            <tr>
+                                                <th>تامین‌کننده</th>
+                                                <th>خرید ناخالص</th>
+                                                <th>مرجوعی‌ها</th>
+                                                <th>بدهی قبلی</th>
+                                                <th>بدهی جدید</th>
+                                                <th>مانده پایان ماه</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($month['suppliers'] as $supplierSummary): ?>
+                                                <tr>
+                                                    <td><?php echo htmlspecialchars($supplierSummary['supplier_name'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                                    <td><?php echo number_format($supplierSummary['gross_purchases'], 0); ?></td>
+                                                    <td><?php echo number_format($supplierSummary['total_returns'], 0); ?></td>
+                                                    <td><?php echo number_format($supplierSummary['opening_balance'], 0); ?></td>
+                                                    <td><?php echo number_format($supplierSummary['net_change'], 0); ?></td>
+                                                    <td><?php echo number_format($supplierSummary['closing_balance'], 0); ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            <?php endif; ?>
+
+                            <div class="details-table mt-6">
                                 <table>
                                     <thead>
                                         <tr>
@@ -254,12 +567,13 @@ function get_purchase_details(mysqli $conn, int $year, int $month): array {
                                     </tbody>
                                 </table>
                             </div>
-                            <div class="mt-4 font-semibold text-gray-700">
-                                مجموع خرید: <?php echo number_format($totalAmount, 0); ?> تومان
-                            </div>
+
+                            <?php if (empty($details)): ?>
+                                <p class="mt-4 text-sm text-gray-500">در این ماه خریدی برای نمایش وجود ندارد.</p>
+                            <?php endif; ?>
                         </div>
                     </div>
-                <?php endwhile; ?>
+                <?php endforeach; ?>
             <?php endif; ?>
         </div>
     </div>
