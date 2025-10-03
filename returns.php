@@ -9,53 +9,126 @@ function handle_create_return(mysqli $conn): void
         $conn->begin_transaction();
         $transactionStarted = true;
 
-        $customer_id = validate_int($_POST['customer_id'] ?? 0, 0);
+        $purchase_id = validate_int($_POST['purchase_id'] ?? null, 1);
         $return_date = validate_date((string)($_POST['return_date'] ?? ''));
         $reason = trim((string)($_POST['reason'] ?? ''));
 
         $raw_items = $_POST['items'] ?? [];
         if (!is_array($raw_items) || $raw_items === []) {
-            throw new InvalidArgumentException('برای ثبت مرجوعی حداقل یک آیتم لازم است.');
+            throw new InvalidArgumentException('برای ثبت مرجوعی تأمین‌کننده حداقل یک آیتم لازم است.');
         }
 
-        $items = [];
+        $purchaseStmt = $conn->prepare('SELECT purchase_id, supplier_id FROM Purchases WHERE purchase_id = ?');
+        $purchaseStmt->bind_param('i', $purchase_id);
+        $purchaseStmt->execute();
+        $purchase = $purchaseStmt->get_result()->fetch_assoc();
+        if (!$purchase) {
+            throw new RuntimeException('خرید انتخاب‌شده یافت نشد.');
+        }
+        $supplier_id = (int) $purchase['supplier_id'];
+
+        $purchaseItemsStmt = $conn->prepare('SELECT purchase_item_id, variant_id, quantity, buy_price FROM Purchase_Items WHERE purchase_id = ?');
+        $purchaseItemsStmt->bind_param('i', $purchase_id);
+        $purchaseItemsStmt->execute();
+        $purchaseItemsResult = $purchaseItemsStmt->get_result();
+
+        $purchaseItems = [];
+        while ($row = $purchaseItemsResult->fetch_assoc()) {
+            $purchaseItems[(int) $row['purchase_item_id']] = [
+                'variant_id' => (int) $row['variant_id'],
+                'quantity' => (int) $row['quantity'],
+                'buy_price' => (float) $row['buy_price'],
+            ];
+        }
+
+        if ($purchaseItems === []) {
+            throw new RuntimeException('هیچ آیتمی برای این خرید ثبت نشده است.');
+        }
+
+        $returnItems = [];
+        $totalAmount = 0.0;
+        $requestedQuantities = [];
+
+        $returnedQtyStmt = $conn->prepare(
+            'SELECT COALESCE(SUM(ri.quantity), 0) AS returned_quantity
+             FROM Return_Items ri
+             JOIN Returns r ON ri.return_id = r.return_id
+             WHERE ri.purchase_item_id = ? AND r.purchase_id = ?'
+        );
+
+        $variantLockStmt = $conn->prepare('SELECT stock FROM Product_Variants WHERE variant_id = ? FOR UPDATE');
+
         foreach ($raw_items as $item) {
+            $purchase_item_id = validate_int($item['purchase_item_id'] ?? null, 1);
             $variant_id = validate_int($item['variant_id'] ?? null, 1);
             $quantity = validate_int($item['quantity'] ?? null, 1);
-            $items[] = ['variant_id' => $variant_id, 'quantity' => $quantity];
-        }
 
-        $insertReturnStmt = $conn->prepare('INSERT INTO Returns (customer_id, return_date, reason) VALUES (?, ?, ?)');
-        $insertReturnStmt->bind_param('iss', $customer_id, $return_date, $reason);
-        $insertReturnStmt->execute();
-        $return_id = (int) $conn->insert_id;
+            if (!isset($purchaseItems[$purchase_item_id])) {
+                throw new RuntimeException('آیتم انتخاب‌شده متعلق به این خرید نیست.');
+            }
 
-        $variantStmt = $conn->prepare('SELECT price FROM Product_Variants WHERE variant_id = ? FOR UPDATE');
-        $insertItemStmt = $conn->prepare('INSERT INTO Return_Items (return_id, variant_id, quantity, return_price) VALUES (?, ?, ?, ?)');
-        $updateStockStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?');
+            $purchaseItem = $purchaseItems[$purchase_item_id];
+            if ($purchaseItem['variant_id'] !== $variant_id) {
+                throw new RuntimeException('تنوع انتخاب‌شده با آیتم خرید همخوانی ندارد.');
+            }
 
-        foreach ($items as $item) {
-            $variant_id = $item['variant_id'];
-            $quantity = $item['quantity'];
+            $returnedQtyStmt->bind_param('ii', $purchase_item_id, $purchase_id);
+            $returnedQtyStmt->execute();
+            $returnedQtyResult = $returnedQtyStmt->get_result()->fetch_assoc();
+            $alreadyReturned = (int) ($returnedQtyResult['returned_quantity'] ?? 0);
 
-            $variantStmt->bind_param('i', $variant_id);
-            $variantStmt->execute();
-            $variant = $variantStmt->get_result()->fetch_assoc();
-            if (!$variant) {
+            $availableForReturn = $purchaseItem['quantity'] - $alreadyReturned;
+            if ($availableForReturn <= 0) {
+                throw new RuntimeException('برای یکی از آیتم‌های انتخاب‌شده امکان مرجوعی باقی نمانده است.');
+            }
+
+            $alreadyRequested = $requestedQuantities[$purchase_item_id] ?? 0;
+            if ($quantity + $alreadyRequested > $availableForReturn) {
+                throw new RuntimeException('تعداد مرجوعی انتخاب‌شده از حداکثر قابل بازگشت بیشتر است.');
+            }
+
+            $variantLockStmt->bind_param('i', $variant_id);
+            $variantLockStmt->execute();
+            $variantRow = $variantLockStmt->get_result()->fetch_assoc();
+            if (!$variantRow) {
                 throw new RuntimeException('تنوع انتخاب‌شده وجود ندارد.');
             }
 
-            $price = (float) $variant['price'];
+            $currentStock = (int) $variantRow['stock'];
+            if ($currentStock < $quantity) {
+                throw new RuntimeException('موجودی کافی برای کاهش انبار در دسترس نیست.');
+            }
 
-            $insertItemStmt->bind_param('iiid', $return_id, $variant_id, $quantity, $price);
+            $requestedQuantities[$purchase_item_id] = $alreadyRequested + $quantity;
+
+            $price = $purchaseItem['buy_price'];
+            $totalAmount += $quantity * $price;
+            $returnItems[] = [
+                'purchase_item_id' => $purchase_item_id,
+                'variant_id' => $variant_id,
+                'quantity' => $quantity,
+                'price' => $price,
+            ];
+        }
+
+        $insertReturnStmt = $conn->prepare('INSERT INTO Returns (purchase_id, supplier_id, return_date, reason, total_amount) VALUES (?, ?, ?, ?, ?)');
+        $insertReturnStmt->bind_param('iissd', $purchase_id, $supplier_id, $return_date, $reason, $totalAmount);
+        $insertReturnStmt->execute();
+        $return_id = (int) $conn->insert_id;
+
+        $insertItemStmt = $conn->prepare('INSERT INTO Return_Items (return_id, purchase_item_id, variant_id, quantity, return_price) VALUES (?, ?, ?, ?, ?)');
+        $updateStockStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock - ? WHERE variant_id = ?');
+
+        foreach ($returnItems as $returnItem) {
+            $insertItemStmt->bind_param('iiiid', $return_id, $returnItem['purchase_item_id'], $returnItem['variant_id'], $returnItem['quantity'], $returnItem['price']);
             $insertItemStmt->execute();
 
-            $updateStockStmt->bind_param('ii', $quantity, $variant_id);
+            $updateStockStmt->bind_param('ii', $returnItem['quantity'], $returnItem['variant_id']);
             $updateStockStmt->execute();
         }
 
         $conn->commit();
-        redirect_with_message('returns.php', 'success', 'مرجوعی جدید با موفقیت ثبت شد و موجودی به‌روزرسانی گردید.');
+        redirect_with_message('returns.php', 'success', 'مرجوعی تأمین‌کننده با موفقیت ثبت شد و موجودی کاهش یافت.');
     } catch (Throwable $e) {
         if ($transactionStarted) {
             $conn->rollback();
@@ -88,7 +161,7 @@ function handle_delete_return(mysqli $conn): void
         $itemsStmt->execute();
         $itemsResult = $itemsStmt->get_result();
 
-        $decreaseStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock - ? WHERE variant_id = ?');
+        $increaseStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?');
         while ($item = $itemsResult->fetch_assoc()) {
             $quantity = (int) $item['quantity'];
             if ($quantity <= 0) {
@@ -96,8 +169,8 @@ function handle_delete_return(mysqli $conn): void
             }
 
             $variant_id = (int) $item['variant_id'];
-            $decreaseStmt->bind_param('ii', $quantity, $variant_id);
-            $decreaseStmt->execute();
+            $increaseStmt->bind_param('ii', $quantity, $variant_id);
+            $increaseStmt->execute();
         }
 
         $deleteItemsStmt = $conn->prepare('DELETE FROM Return_Items WHERE return_id = ?');
@@ -129,7 +202,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['delete_return'])) {
 
 $flash_messages = get_flash_messages();
 
-$products = $conn->query('SELECT * FROM Products ORDER BY model_name');
+$purchasesResult = $conn->query('SELECT p.purchase_id, p.purchase_date, s.name AS supplier_name FROM Purchases p JOIN Suppliers s ON p.supplier_id = s.supplier_id ORDER BY p.purchase_date DESC, p.purchase_id DESC');
+$purchases = [];
+if ($purchasesResult) {
+    while ($row = $purchasesResult->fetch_assoc()) {
+        $purchases[] = [
+            'purchase_id' => (int) $row['purchase_id'],
+            'purchase_date' => (string) $row['purchase_date'],
+            'supplier_name' => (string) $row['supplier_name'],
+        ];
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -209,58 +292,6 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
             100% { transform: rotate(360deg); }
         }
 
-        /* Color selection styles */
-        .color-option {
-            padding: 8px 12px;
-            border: 2px solid #e5e7eb;
-            border-radius: 8px;
-            cursor: pointer;
-            text-align: center;
-            transition: all 0.2s;
-            background-color: white;
-            color: #374151;
-        }
-
-        .color-option.selected {
-            border-color: #3b82f6;
-            background-color: #eff6ff;
-            color: #3b82f6;
-            font-weight: 600;
-        }
-
-        .color-option:hover {
-            border-color: #3b82f6;
-        }
-
-        .size-option {
-            padding: 8px 12px;
-            border: 2px solid #e5e7eb;
-            border-radius: 8px;
-            cursor: pointer;
-            text-align: center;
-            transition: all 0.2s;
-        }
-
-        .size-option.selected {
-            border-color: #3b82f6;
-            background-color: #eff6ff;
-            color: #3b82f6;
-            font-weight: 600;
-        }
-
-        .size-option:hover {
-            border-color: #3b82f6;
-        }
-
-        .size-option.disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            background-color: #f9fafb;
-        }
-
-        .size-option.disabled:hover {
-            border-color: #e5e7eb;
-        }
     </style>
 </head>
 <body class="bg-gray-50">
@@ -353,22 +384,39 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
                         <thead class="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-300">
                             <tr>
                                 <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">شماره مرجوعی</th>
-                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">مشتری</th>
+                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">تأمین‌کننده</th>
+                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">شماره خرید</th>
                                 <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">تاریخ</th>
                                 <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">دلیل</th>
                                 <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">تعداد آیتم</th>
-                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">مجموع</th>
+                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">مبلغ مرجوعی</th>
                                 <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">عملیات</th>
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-100">
                             <?php
-$returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, COUNT(ri.return_item_id) as item_count, SUM(ri.quantity * ri.return_price) as total_amount FROM Returns r LEFT JOIN Return_Items ri ON r.return_id = ri.return_id GROUP BY r.return_id ORDER BY r.return_date DESC, r.return_id DESC");
+$returnsQuery = "
+SELECT
+    r.return_id,
+    r.return_date,
+    r.reason,
+    r.total_amount,
+    p.purchase_id,
+    s.name AS supplier_name,
+    COUNT(ri.return_item_id) AS item_count
+FROM Returns r
+JOIN Purchases p ON r.purchase_id = p.purchase_id
+JOIN Suppliers s ON r.supplier_id = s.supplier_id
+LEFT JOIN Return_Items ri ON r.return_id = ri.return_id
+GROUP BY r.return_id, r.return_date, r.reason, r.total_amount, p.purchase_id, supplier_name
+ORDER BY r.return_date DESC, r.return_id DESC";
+$returns = $conn->query($returnsQuery);
 
-                            if ($returns->num_rows > 0) {
+                            if ($returns && $returns->num_rows > 0) {
                                 while($return = $returns->fetch_assoc()){
                                     $return_id = (int) $return['return_id'];
-                                    $customer_name = htmlspecialchars($return['customer_name'] ?: 'مشتری حضوری', ENT_QUOTES, 'UTF-8');
+                                    $supplier_name = htmlspecialchars((string) $return['supplier_name'], ENT_QUOTES, 'UTF-8');
+                                    $purchase_id = (int) $return['purchase_id'];
                                     $return_date = htmlspecialchars((string) $return['return_date'], ENT_QUOTES, 'UTF-8');
                                     $reason = htmlspecialchars((string) ($return['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
                                     $item_count = (int) $return['item_count'];
@@ -376,7 +424,8 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
 
                                     echo "<tr class='hover:bg-gray-50'>
                                             <td class='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>#مرجوعی-{$return_id}</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$customer_name}</td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$supplier_name}</td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>#خرید-{$purchase_id}</td>
                                             <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$return_date}</td>
                                             <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$reason}</td>
                                             <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$item_count}</td>
@@ -422,62 +471,43 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
                             <form method="POST" id="newReturnForm">
                                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                                     <div class="lg:col-span-2">
-                                        <h4 class="font-medium text-gray-700 mb-3">انتخاب محصولات</h4>
+                                        <h4 class="font-medium text-gray-700 mb-3">انتخاب آیتم‌ها</h4>
 
                                         <!-- Selected Items -->
                                         <div id="selectedReturnItems" class="space-y-3 mb-4 max-h-60 overflow-y-auto p-2">
                                             <!-- Items will be added here dynamically -->
                                         </div>
 
-                                        <!-- Add Product Form -->
+                                        <!-- Add Item Form -->
                                         <div class="bg-gray-50 p-4 rounded-lg mb-4">
                                             <div class="space-y-4">
-                                                <!-- Product Selection -->
                                                 <div>
-                                                    <label class="block text-sm font-medium text-gray-700 mb-2">انتخاب محصول</label>
-                                                    <select id="returnProductSelect" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                                        <option value="">انتخاب محصول...</option>
-                                                        <?php
-                                                        while($product = $products->fetch_assoc()){
-                                                            $product_id = (int) $product['product_id'];
-                                                            $product_name = htmlspecialchars($product['model_name'], ENT_QUOTES, 'UTF-8');
-                                                            echo "<option value='{$product_id}'>{$product_name}</option>";
-                                                        }
-                                                        ?>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-2">انتخاب آیتم خرید</label>
+                                                    <select id="returnVariantSelect" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100" disabled>
+                                                        <option value="">ابتدا خرید را انتخاب کنید</option>
                                                     </select>
                                                 </div>
 
-                                                <!-- Color Selection -->
-                                                <div id="returnColorSelection" class="hidden">
-                                                    <label class="block text-sm font-medium text-gray-700 mb-2">انتخاب رنگ</label>
-                                                    <div id="returnColorOptions" class="flex flex-wrap gap-3">
-                                                        <!-- Color options will be loaded here -->
+                                                <div id="returnVariantInfo" class="bg-white border border-gray-200 rounded-lg p-3 text-sm hidden">
+                                                    <div class="flex justify-between">
+                                                        <span class="text-gray-600">موجودی قابل مرجوع:</span>
+                                                        <span id="variantAvailable" class="font-medium text-gray-800">0</span>
+                                                    </div>
+                                                    <div class="flex justify-between mt-2">
+                                                        <span class="text-gray-600">قیمت خرید:</span>
+                                                        <span id="variantPrice" class="font-medium text-gray-800">0 تومان</span>
                                                     </div>
                                                 </div>
 
-                                                <!-- Size Selection -->
-                                                <div id="returnSizeSelection" class="hidden">
-                                                    <label class="block text-sm font-medium text-gray-700 mb-2">انتخاب سایز</label>
-                                                    <div id="returnSizeOptions" class="grid grid-cols-6 gap-2">
-                                                        <!-- Size options will be loaded here -->
+                                                <div class="grid grid-cols-2 gap-4">
+                                                    <div>
+                                                        <label class="block text-sm font-medium text-gray-700 mb-1">تعداد</label>
+                                                        <input type="number" id="returnQuantityInput" min="1" value="1" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100" disabled>
                                                     </div>
-                                                </div>
-
-                                                <!-- Quantity and Add Button -->
-                                                <div id="returnQuantitySelection" class="hidden">
-                                                    <div class="grid grid-cols-2 gap-4">
-                                                        <div>
-                                                            <label class="block text-sm font-medium text-gray-700 mb-1">تعداد</label>
-                                                            <input type="number" id="returnQuantityInput" min="1" value="1" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                                        </div>
-                                                        <div class="flex items-end">
-                                                            <button type="button" onclick="addItemToReturn()" class="w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 transition-colors">
-                                                                افزودن به مرجوعی
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                    <div id="returnStockInfo" class="mt-2 text-sm text-gray-500">
-                                                        <!-- Stock info will be shown here -->
+                                                    <div class="flex items-end">
+                                                        <button type="button" id="addReturnItemButton" onclick="addItemToReturn()" class="w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                                            افزودن به مرجوعی
+                                                        </button>
                                                     </div>
                                                 </div>
                                             </div>
@@ -489,17 +519,31 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
                                         <div class="bg-gray-50 p-4 rounded-lg">
                                             <div class="space-y-4">
                                                 <div>
-                                                    <label class="block text-sm font-medium text-gray-700 mb-1">مشتری</label>
-                                                    <select name="customer_id" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                                        <option value="0">مشتری حضوری</option>
-                                                        <?php
-                                                        $customers = $conn->query("SELECT * FROM Customers ORDER BY name");
-                                                        while($customer = $customers->fetch_assoc()){
-                                                            echo "<option value='{$customer['customer_id']}'>{$customer['name']}</option>";
-                                                        }
-                                                        ?>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">انتخاب خرید</label>
+                                                    <select name="purchase_id" id="returnPurchaseSelect" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100" <?php echo empty($purchases) ? 'disabled' : ''; ?>>
+                                                        <option value="">انتخاب خرید...</option>
+                                                        <?php foreach ($purchases as $purchase): ?>
+                                                            <option value="<?php echo $purchase['purchase_id']; ?>">
+                                                                <?php echo '#خرید-' . $purchase['purchase_id'] . ' | ' . htmlspecialchars($purchase['supplier_name'], ENT_QUOTES, 'UTF-8') . ' - ' . htmlspecialchars($purchase['purchase_date'], ENT_QUOTES, 'UTF-8'); ?>
+                                                            </option>
+                                                        <?php endforeach; ?>
                                                     </select>
+                                                    <?php if (empty($purchases)): ?>
+                                                        <p class="text-sm text-red-500 mt-2">هیچ خریدی برای ثبت مرجوعی موجود نیست.</p>
+                                                    <?php endif; ?>
                                                 </div>
+
+                                                <div id="purchaseSummary" class="bg-white border border-gray-200 rounded-lg p-3 text-sm">
+                                                    <div class="flex justify-between">
+                                                        <span class="text-gray-600">تأمین‌کننده:</span>
+                                                        <span id="summarySupplier" class="font-medium text-gray-800">—</span>
+                                                    </div>
+                                                    <div class="flex justify-between mt-2">
+                                                        <span class="text-gray-600">تاریخ خرید:</span>
+                                                        <span id="summaryPurchaseDate" class="font-medium text-gray-800">—</span>
+                                                    </div>
+                                                </div>
+
                                                 <div>
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">تاریخ مرجوعی</label>
                                                     <input type="date" name="return_date" value="<?php echo date('Y-m-d'); ?>" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
@@ -563,10 +607,18 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
 
         let returnItems = [];
         let returnItemCounter = 0;
-        let selectedReturnProductId = null;
-        let selectedReturnColor = null;
-        let selectedReturnSize = null;
         let currentReturnVariants = [];
+        let selectedPurchaseId = null;
+
+        const purchaseSelect = document.getElementById('returnPurchaseSelect');
+        const variantSelect = document.getElementById('returnVariantSelect');
+        const quantityInput = document.getElementById('returnQuantityInput');
+        const addItemButton = document.getElementById('addReturnItemButton');
+        const variantInfoBox = document.getElementById('returnVariantInfo');
+        const variantAvailableSpan = document.getElementById('variantAvailable');
+        const variantPriceSpan = document.getElementById('variantPrice');
+        const summarySupplier = document.getElementById('summarySupplier');
+        const summaryPurchaseDate = document.getElementById('summaryPurchaseDate');
 
         function openModal(modalId) {
             if (modalId === 'newReturnModal') {
@@ -582,255 +634,225 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
         function resetNewReturnModal() {
             returnItems = [];
             returnItemCounter = 0;
-            selectedReturnProductId = null;
-            selectedReturnColor = null;
-            selectedReturnSize = null;
+            currentReturnVariants = [];
+            selectedPurchaseId = null;
+
+            document.getElementById('selectedReturnItems').innerHTML = '';
+            document.getElementById('returnItemsInputs').innerHTML = '';
+            document.getElementById('returnSubtotal').textContent = '0 تومان';
+            document.getElementById('returnTotal').textContent = '0 تومان';
+
+            if (purchaseSelect) {
+                purchaseSelect.value = '';
+            }
+
+            clearVariantSelection();
+            updatePurchaseSummary('—', '—');
+        }
+
+        function clearVariantSelection() {
+            if (variantSelect) {
+                variantSelect.innerHTML = '<option value="">ابتدا خرید را انتخاب کنید</option>';
+                variantSelect.disabled = true;
+            }
+            if (quantityInput) {
+                quantityInput.value = '1';
+                quantityInput.disabled = true;
+            }
+            if (addItemButton) {
+                addItemButton.disabled = true;
+            }
+            if (variantInfoBox) {
+                variantInfoBox.classList.add('hidden');
+            }
+        }
+
+        function updatePurchaseSummary(supplier, date) {
+            const supplierText = supplier ? supplier : '—';
+            const dateText = date ? date : '—';
+
+            if (summarySupplier) {
+                summarySupplier.textContent = supplierText;
+            }
+            if (summaryPurchaseDate) {
+                summaryPurchaseDate.textContent = dateText;
+            }
+        }
+
+        if (purchaseSelect) {
+            purchaseSelect.addEventListener('change', handlePurchaseChange);
+        }
+
+        function handlePurchaseChange() {
+            selectedPurchaseId = purchaseSelect.value || null;
+            returnItems = [];
+            returnItemCounter = 0;
             currentReturnVariants = [];
 
             document.getElementById('selectedReturnItems').innerHTML = '';
             document.getElementById('returnItemsInputs').innerHTML = '';
             document.getElementById('returnSubtotal').textContent = '0 تومان';
             document.getElementById('returnTotal').textContent = '0 تومان';
-            document.getElementById('returnProductSelect').value = '';
-            document.getElementById('returnQuantityInput').value = '1';
 
-            // Hide selection sections
-            document.getElementById('returnColorSelection').classList.add('hidden');
-            document.getElementById('returnSizeSelection').classList.add('hidden');
-            document.getElementById('returnQuantitySelection').classList.add('hidden');
-        }
+            clearVariantSelection();
 
-        // When product is selected
-        document.getElementById('returnProductSelect').addEventListener('change', function() {
-            const productId = this.value;
-
-            if (!productId) {
-                document.getElementById('returnColorSelection').classList.add('hidden');
-                document.getElementById('returnSizeSelection').classList.add('hidden');
-                document.getElementById('returnQuantitySelection').classList.add('hidden');
+            if (!selectedPurchaseId) {
+                updatePurchaseSummary('—', '—');
                 return;
             }
 
-            selectedReturnProductId = productId;
-            selectedReturnColor = null;
-            selectedReturnSize = null;
+            if (variantSelect) {
+                variantSelect.disabled = true;
+                variantSelect.innerHTML = '<option value="">در حال بارگذاری...</option>';
+            }
 
-            // Load colors for this product
-            loadReturnColors(productId);
-        });
-
-        function loadReturnColors(productId) {
-            // Show loading state
-            document.getElementById('returnColorOptions').innerHTML = '<div class="spinner"></div><span class="mr-2 text-gray-600">در حال بارگذاری...</span>';
-            document.getElementById('returnColorSelection').classList.remove('hidden');
-            document.getElementById('returnSizeSelection').classList.add('hidden');
-            document.getElementById('returnQuantitySelection').classList.add('hidden');
-
-            // Fetch colors from server
-            fetch('get_product_colors.php?product_id=' + productId)
+            fetch('get_purchase_return_items.php?purchase_id=' + selectedPurchaseId)
                 .then(response => response.json())
                 .then(data => {
-                    currentReturnVariants = data.variants;
-                    const colorOptions = document.getElementById('returnColorOptions');
-                    colorOptions.innerHTML = '';
+                    if (!data.success) {
+                        throw new Error(data.message || 'خطا در دریافت اطلاعات خرید');
+                    }
 
-                    if (data.colors.length === 0) {
-                        colorOptions.innerHTML = '<p class="text-gray-500">هیچ رنگی برای این محصول موجود نیست</p>';
+                    currentReturnVariants = data.items || [];
+                    const purchaseInfo = data.purchase || {};
+                    updatePurchaseSummary(purchaseInfo.supplier_name || '—', purchaseInfo.purchase_date || '—');
+
+                    const availableItems = currentReturnVariants.filter(item => item.available_quantity > 0);
+
+                    if (!variantSelect) {
                         return;
                     }
 
-                    data.colors.forEach(color => {
-                        const colorOption = document.createElement('div');
-                        colorOption.className = 'color-option';
-                        colorOption.textContent = color.color_name || color.color;
-                        colorOption.setAttribute('data-color', color.color);
+                    if (availableItems.length === 0) {
+                        variantSelect.innerHTML = '<option value="">هیچ آیتمی برای مرجوعی باقی نمانده است</option>';
+                        quantityInput.disabled = true;
+                        addItemButton.disabled = true;
+                        variantInfoBox.classList.add('hidden');
+                        return;
+                    }
 
-                        colorOption.addEventListener('click', function() {
-                            selectReturnColor(color.color);
-                        });
-
-                        colorOptions.appendChild(colorOption);
+                    variantSelect.disabled = false;
+                    variantSelect.innerHTML = '<option value="">انتخاب آیتم...</option>';
+                    availableItems.forEach(item => {
+                        const label = `${item.product_name} - ${item.color} - ${item.size}`;
+                        const option = document.createElement('option');
+                        option.value = item.purchase_item_id;
+                        option.textContent = `${label} | موجود: ${item.available_quantity}`;
+                        variantSelect.appendChild(option);
                     });
                 })
                 .catch(error => {
-                    console.error('Error loading colors:', error);
-                    document.getElementById('returnColorOptions').innerHTML = '<p class="text-red-500">خطا در بارگذاری رنگ‌ها</p>';
+                    console.error('Error loading purchase items:', error);
+                    updatePurchaseSummary('—', '—');
+                    if (variantSelect) {
+                        variantSelect.innerHTML = '<option value="">خطا در بارگذاری آیتم‌های خرید</option>';
+                        variantSelect.disabled = true;
+                    }
+                    if (quantityInput) {
+                        quantityInput.disabled = true;
+                    }
+                    if (addItemButton) {
+                        addItemButton.disabled = true;
+                    }
+                    if (variantInfoBox) {
+                        variantInfoBox.classList.add('hidden');
+                    }
                 });
         }
 
-        function selectReturnColor(color) {
-            selectedReturnColor = color;
-            selectedReturnSize = null;
-
-            // Update UI - mark selected color
-            document.querySelectorAll('#returnColorOptions .color-option').forEach(option => {
-                if (option.getAttribute('data-color') === color) {
-                    option.classList.add('selected');
-                } else {
-                    option.classList.remove('selected');
-                }
-            });
-
-            // Load sizes for selected color
-            loadReturnSizes(selectedReturnProductId, color);
+        if (variantSelect) {
+            variantSelect.addEventListener('change', handleVariantChange);
         }
 
-        function loadReturnSizes(productId, color) {
-            // Show loading state
-            document.getElementById('returnSizeOptions').innerHTML = '<div class="col-span-6 flex justify-center"><div class="spinner"></div><span class="mr-2 text-gray-600">در حال بارگذاری...</span></div>';
-            document.getElementById('returnSizeSelection').classList.remove('hidden');
-            document.getElementById('returnQuantitySelection').classList.add('hidden');
-
-            // Filter variants by product and color
-            const availableSizes = [];
-            const sizeMap = {};
-
-            currentReturnVariants.forEach(variant => {
-                if (variant.product_id == productId && variant.color === color) {
-                    if (!sizeMap[variant.size]) {
-                        sizeMap[variant.size] = {
-                            size: variant.size,
-                            stock: variant.stock,
-                            price: variant.price,
-                            variant_id: variant.variant_id
-                        };
-                    }
-                }
-            });
-
-            // Convert to array and sort by size order
-            Object.values(sizeMap).forEach(sizeInfo => {
-                availableSizes.push(sizeInfo);
-            });
-
-            // Sort sizes in logical order
-            const sizeOrder = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
-            availableSizes.sort((a, b) => sizeOrder.indexOf(a.size) - sizeOrder.indexOf(b.size));
-
-            // Display sizes
-            const sizeOptions = document.getElementById('returnSizeOptions');
-            sizeOptions.innerHTML = '';
-
-            if (availableSizes.length === 0) {
-                sizeOptions.innerHTML = '<p class="col-span-6 text-gray-500 text-center py-4">هیچ سایزی برای این رنگ موجود نیست</p>';
+        function handleVariantChange() {
+            if (!variantSelect) {
                 return;
             }
 
-            // Only show available sizes
-            availableSizes.forEach(sizeInfo => {
-                const sizeOption = document.createElement('div');
-                sizeOption.className = 'size-option';
-                sizeOption.textContent = sizeInfo.size;
-                sizeOption.setAttribute('data-size', sizeInfo.size);
-                sizeOption.setAttribute('data-stock', sizeInfo.stock);
-                sizeOption.setAttribute('data-price', sizeInfo.price);
-                sizeOption.setAttribute('data-variant-id', sizeInfo.variant_id);
+            const purchaseItemId = variantSelect.value;
+            if (!purchaseItemId) {
+                quantityInput.disabled = true;
+                addItemButton.disabled = true;
+                variantInfoBox.classList.add('hidden');
+                return;
+            }
 
-                // Add stock indicator
-                const stockIndicator = document.createElement('div');
-                stockIndicator.className = 'text-xs text-gray-500 mt-1';
-                stockIndicator.textContent = `موجودی: ${sizeInfo.stock}`;
-                sizeOption.appendChild(stockIndicator);
+            const variant = currentReturnVariants.find(item => String(item.purchase_item_id) === purchaseItemId);
+            if (!variant) {
+                quantityInput.disabled = true;
+                addItemButton.disabled = true;
+                variantInfoBox.classList.add('hidden');
+                return;
+            }
 
-                sizeOption.addEventListener('click', function() {
-                    selectReturnSize(sizeInfo.size, sizeInfo.stock, sizeInfo.price, sizeInfo.variant_id);
-                });
+            const remaining = getRemainingQuantityForItem(variant.purchase_item_id, variant.available_quantity);
+            quantityInput.value = remaining > 0 ? '1' : '0';
+            quantityInput.max = remaining;
+            quantityInput.disabled = remaining <= 0;
+            addItemButton.disabled = remaining <= 0;
 
-                sizeOptions.appendChild(sizeOption);
-            });
+            variantAvailableSpan.textContent = remaining.toLocaleString('fa-IR');
+            variantPriceSpan.textContent = `${Number(variant.buy_price).toLocaleString('fa-IR')} تومان`;
+            variantInfoBox.classList.remove('hidden');
         }
 
-        function selectReturnSize(size, stock, price, variantId) {
-            selectedReturnSize = size;
-
-            // Update UI - mark selected size
-            document.querySelectorAll('#returnSizeOptions .size-option').forEach(option => {
-                if (option.getAttribute('data-size') === size) {
-                    option.classList.add('selected');
-                } else {
-                    option.classList.remove('selected');
-                }
-            });
-
-            // Show quantity selection
-            document.getElementById('returnQuantitySelection').classList.remove('hidden');
-            document.getElementById('returnQuantityInput').max = stock;
-            document.getElementById('returnQuantityInput').value = '1';
-
-            // Update stock info
-            document.getElementById('returnStockInfo').innerHTML = `
-                <div class="flex justify-between">
-                    <span>موجودی:</span>
-                    <span class="font-medium">${stock} عدد</span>
-                </div>
-                <div class="flex justify-between">
-                    <span>قیمت واحد:</span>
-                    <span class="font-medium">${price.toLocaleString()} تومان</span>
-                </div>
-            `;
-
-            // Store current variant info
-            currentReturnVariantInfo = {
-                variantId: variantId,
-                price: price,
-                stock: stock
-            };
+        function getRemainingQuantityForItem(purchaseItemId, totalAvailable) {
+            const existingItem = returnItems.find(item => item.purchaseItemId === purchaseItemId);
+            const used = existingItem ? existingItem.quantity : 0;
+            const remaining = totalAvailable - used;
+            return remaining > 0 ? remaining : 0;
         }
 
         function addItemToReturn() {
-            const quantityInput = document.getElementById('returnQuantityInput');
-            const quantity = parseInt(quantityInput.value);
-
-            if (!selectedReturnProductId || !selectedReturnColor || !selectedReturnSize) {
-                alert('لطفا محصول، رنگ و سایز را انتخاب کنید.');
+            if (!selectedPurchaseId) {
+                alert('لطفاً ابتدا خریدی را انتخاب کنید.');
                 return;
             }
 
-            if (!quantity || quantity < 1) {
-                alert('لطفا تعداد معتبر وارد کنید.');
+            if (!variantSelect || !variantSelect.value) {
+                alert('لطفاً آیتمی از خرید انتخاب کنید.');
                 return;
             }
 
-            if (quantity > currentReturnVariantInfo.stock) {
-                alert('تعداد انتخاب شده بیشتر از موجودی است.');
+            const variant = currentReturnVariants.find(item => String(item.purchase_item_id) === variantSelect.value);
+            if (!variant) {
+                alert('آیتم انتخاب‌شده معتبر نیست.');
                 return;
             }
 
-            // Get product name
-            const productSelect = document.getElementById('returnProductSelect');
-            const productName = productSelect.options[productSelect.selectedIndex].text;
+            const quantity = parseInt(quantityInput.value, 10);
+            if (!quantity || quantity <= 0) {
+                alert('لطفاً تعداد معتبر وارد کنید.');
+                return;
+            }
 
-            // Check if item already exists
-            const existingItem = returnItems.find(item => item.variantId === currentReturnVariantInfo.variantId);
+            const remaining = getRemainingQuantityForItem(variant.purchase_item_id, variant.available_quantity);
+            if (quantity > remaining) {
+                alert('تعداد انتخاب‌شده بیشتر از مقدار قابل مرجوع است.');
+                return;
+            }
+
+            const existingItem = returnItems.find(item => item.purchaseItemId === variant.purchase_item_id);
             if (existingItem) {
                 existingItem.quantity += quantity;
-                existingItem.total = existingItem.quantity * existingItem.price;
-                updateSelectedReturnItemsDisplay();
-                updateReturnTotals();
+                existingItem.total = existingItem.quantity * variant.buy_price;
             } else {
-                const item = {
+                const label = `${variant.product_name} - ${variant.color} - ${variant.size}`;
+                returnItems.push({
                     id: returnItemCounter++,
-                    variantId: currentReturnVariantInfo.variantId,
-                    productName: `${productName} - ${selectedReturnColor} - ${selectedReturnSize}`,
+                    purchaseItemId: variant.purchase_item_id,
+                    variantId: variant.variant_id,
+                    label: label,
                     quantity: quantity,
-                    price: currentReturnVariantInfo.price,
-                    total: quantity * currentReturnVariantInfo.price
-                };
-                returnItems.push(item);
-                addReturnItemToDisplay(item);
+                    price: variant.buy_price,
+                    total: quantity * variant.buy_price
+                });
             }
 
+            updateSelectedReturnItemsDisplay();
             updateReturnTotals();
             updateReturnHiddenInputs();
-
-            // Reset selection
-            selectedReturnColor = null;
-            selectedReturnSize = null;
-            document.getElementById('returnColorSelection').classList.add('hidden');
-            document.getElementById('returnSizeSelection').classList.add('hidden');
-            document.getElementById('returnQuantitySelection').classList.add('hidden');
-            document.querySelectorAll('#returnColorOptions .color-option').forEach(opt => opt.classList.remove('selected'));
-            document.querySelectorAll('#returnSizeOptions .size-option').forEach(opt => opt.classList.remove('selected'));
+            handleVariantChange();
         }
 
         function addReturnItemToDisplay(item) {
@@ -841,11 +863,11 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
 
             itemDiv.innerHTML = `
                 <div class="flex-1">
-                    <h5 class="font-medium text-gray-800">${item.productName}</h5>
-                    <div class="text-sm text-gray-500">تعداد: ${Math.max(0, item.quantity)} × ${item.price.toLocaleString()} تومان</div>
+                    <h5 class="font-medium text-gray-800">${item.label}</h5>
+                    <div class="text-sm text-gray-500">تعداد: ${Number(item.quantity).toLocaleString('fa-IR')} × ${Number(item.price).toLocaleString('fa-IR')} تومان</div>
                 </div>
                 <div class="text-left">
-                    <div class="font-bold text-gray-800">${item.total.toLocaleString()} تومان</div>
+                    <div class="font-bold text-gray-800">${Number(item.total).toLocaleString('fa-IR')} تومان</div>
                 </div>
                 <button onclick="removeReturnItem(${item.id})" class="text-red-500 hover:text-red-700 mr-2 transition-colors">
                     <i data-feather="trash-2" class="w-4 h-4"></i>
@@ -858,9 +880,13 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
 
         function removeReturnItem(itemId) {
             returnItems = returnItems.filter(item => item.id !== itemId);
-            document.getElementById(`return-item-${itemId}`).remove();
+            const element = document.getElementById(`return-item-${itemId}`);
+            if (element) {
+                element.remove();
+            }
             updateReturnTotals();
             updateReturnHiddenInputs();
+            handleVariantChange();
         }
 
         function updateSelectedReturnItemsDisplay() {
@@ -871,8 +897,8 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
 
         function updateReturnTotals() {
             const subtotal = returnItems.reduce((sum, item) => sum + item.total, 0);
-            document.getElementById('returnSubtotal').textContent = subtotal.toLocaleString() + ' تومان';
-            document.getElementById('returnTotal').textContent = subtotal.toLocaleString() + ' تومان';
+            document.getElementById('returnSubtotal').textContent = subtotal.toLocaleString('fa-IR') + ' تومان';
+            document.getElementById('returnTotal').textContent = subtotal.toLocaleString('fa-IR') + ' تومان';
         }
 
         function updateReturnHiddenInputs() {
@@ -881,18 +907,24 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
 
             returnItems.forEach((item, index) => {
                 inputsContainer.innerHTML += `
+                    <input type="hidden" name="items[${index}][purchase_item_id]" value="${item.purchaseItemId}">
                     <input type="hidden" name="items[${index}][variant_id]" value="${item.variantId}">
                     <input type="hidden" name="items[${index}][quantity]" value="${item.quantity}">
-                    <input type="hidden" name="items[${index}][return_price]" value="${item.price}">
                 `;
             });
         }
 
         function validateReturnForm() {
-            if (returnItems.length === 0) {
-                alert('لطفا حداقل یک محصول به مرجوعی اضافه کنید.');
+            if (!purchaseSelect || !purchaseSelect.value) {
+                alert('لطفاً خرید موردنظر را انتخاب کنید.');
                 return false;
             }
+
+            if (returnItems.length === 0) {
+                alert('لطفاً حداقل یک آیتم به مرجوعی اضافه کنید.');
+                return false;
+            }
+
             return true;
         }
 
@@ -907,7 +939,6 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
 
             document.getElementById('returnItemsModal').classList.remove('hidden');
 
-            // Load return items via AJAX - need to create get_return_items.php
             fetch('get_return_items.php?return_id=' + returnId)
                 .then(response => response.text())
                 .then(data => {
