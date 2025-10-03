@@ -1,16 +1,25 @@
-# TODO: Prevent Negative Quantities in Sales Form
+# TODO List for Modifying SuitStore Manager Pro
 
-- [x] Add server-side validation in create_sale POST handler to reject negative or zero quantities
-- [x] Add server-side validation in add_sale_item POST handler to reject negative or zero quantities
-- [x] Add server-side validation in edit_sale_item POST handler to reject negative or zero quantities
-- [x] In display code, ensure no negative quantities are shown (replace with zero or hide)
-- [x] In JavaScript addItemToSale() function, add check to prevent adding items with negative or zero quantity
+## Products Page (products.php)
+- [ ] Remove "محصول جدید" button from header
+- [ ] Add link to purchases.php in header
+- [ ] Modify product list query to show only products with stock > 0
+- [ ] Add count of zero stock products in stats
+- [ ] Remove add product modal
+- [ ] Remove add variant modal
+- [ ] Add recharge button for variants (update stock)
+- [ ] Create recharge modal for updating stock
+- [ ] Update variant table to show recharge instead of edit/delete
 
-# TODO: Add Purchase Creation Form
+## Purchases Page (purchases.php)
+- [ ] Remove supplier-related code and functions
+- [ ] Simplify form: date, product name (select or new), colors (multiple), sizes per color, purchase price
+- [ ] Modify handle_create_purchase to create product/variants if new
+- [ ] Update display to group by product with total qty
+- [ ] Remove supplier balance calculations
 
-- [x] Update sidebar link from "مشاهده خریدها" to "خریدها"
-- [x] Add "New Purchase" button in header
-- [x] Add create_purchase POST handler with validation and stock increase
-- [x] Add purchase creation modal with supplier selection, date, payment, items
-- [x] Add JavaScript for modal functionality and item selection
-- [x] Test purchase creation and verify stock updates
+## Sales Page (sales.php)
+- [ ] Remove customer select from new sale modal
+- [ ] Remove status select from new sale modal
+- [ ] Update handle_create_sale to set customer_id=0, status='paid'
+- [ ] Remove customer and status from edit sale modal

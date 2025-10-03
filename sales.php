@@ -10,10 +10,10 @@ function handle_create_sale(mysqli $conn): void
         $conn->begin_transaction();
         $transactionStarted = true;
 
-        $customer_id = validate_int($_POST['customer_id'] ?? 0, 0);
+        $customer_id = 0;
         $sale_date = validate_date((string)($_POST['sale_date'] ?? ''));
         $payment_method = validate_enum((string)($_POST['payment_method'] ?? ''), ['cash', 'credit_card', 'bank_transfer']);
-        $status = validate_enum((string)($_POST['status'] ?? 'pending'), ['pending', 'paid']);
+        $status = 'paid';
 
         $raw_items = $_POST['items'] ?? [];
         if (!is_array($raw_items) || $raw_items === []) {
@@ -374,7 +374,7 @@ $month_sales = $conn->query("SELECT SUM(si.quantity * si.sell_price) as total FR
 $today_sales_total = $today_sales['total'] ?: 0;
 $month_sales_total = $month_sales['total'] ?: 0;
 
-$products = $conn->query('SELECT * FROM Products ORDER BY model_name');
+$products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Variants pv ON p.product_id = pv.product_id WHERE pv.stock > 0 ORDER BY p.model_name');
 ?>
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -665,6 +665,14 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
                         </div>
                     </div>
                 </div>
+                <div class="mb-6">
+                    <button id="showOutOfStockBtn" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors">
+                        نمایش محصولات و تنوع‌های تمام شده
+                    </button>
+                    <div id="outOfStockDetails" class="mt-4 p-4 bg-white rounded-lg shadow border border-gray-200 max-h-96 overflow-y-auto hidden">
+                        <!-- Out of stock details will be loaded here -->
+                    </div>
+                </div>
 
                 <!-- Filters and Search -->
                 <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
@@ -789,18 +797,6 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
                                         <div class="bg-gray-50 p-4 rounded-lg">
                                             <div class="space-y-4">
                                                 <div>
-                                                    <label class="block text-sm font-medium text-gray-700 mb-1">مشتری</label>
-                                                    <select name="customer_id" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                                        <option value="0">مشتری حضوری</option>
-                                                        <?php
-                                                        $customers = $conn->query("SELECT * FROM Customers ORDER BY name");
-                                                        while($customer = $customers->fetch_assoc()){
-                                                            echo "<option value='{$customer['customer_id']}'>{$customer['name']}</option>";
-                                                        }
-                                                        ?>
-                                                    </select>
-                                                </div>
-                                                <div>
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">روش پرداخت</label>
                                                     <select name="payment_method" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                                                         <option value="cash">نقدی</option>
@@ -811,13 +807,6 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
                                                 <div>
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">تاریخ فروش</label>
                                                     <input type="date" name="sale_date" value="<?php echo date('Y-m-d'); ?>" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                                </div>
-                                                <div>
-                                                    <label class="block text-sm font-medium text-gray-700 mb-1">وضعیت</label>
-                                                    <select name="status" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                                        <option value="pending">در انتظار پرداخت</option>
-                                                        <option value="paid">پرداخت شده</option>
-                                                    </select>
                                                 </div>
 
                                                 <div class="pt-4 border-t border-gray-200">
@@ -1107,9 +1096,11 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
                 }
             });
 
-            // Convert to array and sort by size order
+            // Convert to array and sort by size order, only include sizes with stock > 0
             Object.values(sizeMap).forEach(sizeInfo => {
-                availableSizes.push(sizeInfo);
+                if (sizeInfo.stock > 0) {
+                    availableSizes.push(sizeInfo);
+                }
             });
 
             // Sort sizes in logical order
@@ -1232,14 +1223,9 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
             updateTotals();
             updateHiddenInputs();
 
-            // Reset selection
-            selectedColor = null;
-            selectedSize = null;
-            document.getElementById('colorSelection').classList.add('hidden');
-            document.getElementById('sizeSelection').classList.add('hidden');
+            // Reset quantity selection for next item
             document.getElementById('quantitySelection').classList.add('hidden');
-            document.querySelectorAll('.color-option').forEach(opt => opt.classList.remove('selected'));
-            document.querySelectorAll('.size-option').forEach(opt => opt.classList.remove('selected'));
+            document.getElementById('quantityInput').value = '1';
         }
 
         function addItemToDisplay(item) {
@@ -1497,6 +1483,73 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
         // Initialize DataTables
         $(document).ready(function() {
             initializeSalesTable();
+        });
+
+        // Out of stock functionality
+        document.getElementById('showOutOfStockBtn').addEventListener('click', function() {
+            const detailsDiv = document.getElementById('outOfStockDetails');
+            const btn = this;
+
+            if (detailsDiv.classList.contains('hidden')) {
+                // Show loading state
+                detailsDiv.innerHTML = `
+                    <div class="flex justify-center items-center py-8">
+                        <div class="spinner"></div>
+                        <span class="mr-2 text-gray-600">در حال بارگذاری...</span>
+                    </div>
+                `;
+                detailsDiv.classList.remove('hidden');
+
+                // Load out of stock data
+                fetch('get_out_of_stock.php')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.products && data.products.length > 0) {
+                            let html = '<div class="space-y-4">';
+
+                            data.products.forEach(product => {
+                                html += `
+                                    <div class="border border-gray-200 rounded-lg p-4">
+                                        <div class="flex justify-between items-start mb-2">
+                                            <div>
+                                                <h4 class="font-semibold text-gray-800">${product.model_name}</h4>
+                                                <p class="text-sm text-gray-600">برند: ${product.brand} | دسته‌بندی: ${product.category}</p>
+                                            </div>
+                                        </div>
+                                        <div class="text-sm text-gray-700">
+                                            <strong>تنوع‌های تمام شده:</strong>
+                                            <div class="mt-1 text-red-600">${product.out_of_stock_variants}</div>
+                                        </div>
+                                    </div>
+                                `;
+                            });
+
+                            html += '</div>';
+                            detailsDiv.innerHTML = html;
+                        } else {
+                            detailsDiv.innerHTML = `
+                                <div class="text-center py-8 text-gray-500">
+                                    <i data-feather="check-circle" class="w-12 h-12 mx-auto mb-4 text-green-500"></i>
+                                    <p>هیچ محصولی تمام نشده است.</p>
+                                </div>
+                            `;
+                        }
+
+                        feather.replace();
+                    })
+                    .catch(error => {
+                        console.error('Error loading out of stock items:', error);
+                        detailsDiv.innerHTML = `
+                            <div class="text-center py-8 text-red-500">
+                                <i data-feather="alert-circle" class="w-12 h-12 mx-auto mb-4"></i>
+                                <p>خطا در بارگذاری محصولات تمام شده</p>
+                            </div>
+                        `;
+                        feather.replace();
+                    });
+            } else {
+                detailsDiv.classList.add('hidden');
+            }
         });
     </script>
 </body>

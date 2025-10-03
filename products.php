@@ -92,6 +92,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect_with_message('products.php', 'error', normalize_error_message($e));
         }
     }
+
+    if (isset($_POST['recharge_variant'])) {
+        try {
+            $variant_id = validate_int($_POST['variant_id'] ?? null, 1);
+            $additional_stock = validate_int($_POST['additional_stock'] ?? null, 1);
+
+            $stmt = $conn->prepare('UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?');
+            $stmt->bind_param('ii', $additional_stock, $variant_id);
+            $stmt->execute();
+
+            redirect_with_message('products.php', 'success', 'موجودی تنوع با موفقیت شارژ شد.');
+        } catch (Throwable $e) {
+            redirect_with_message('products.php', 'error', normalize_error_message($e));
+        }
+    }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
@@ -162,6 +177,7 @@ $total_products = $conn->query("SELECT COUNT(*) as count FROM Products")->fetch_
 $total_variants = $conn->query("SELECT COUNT(*) as count FROM Product_Variants")->fetch_assoc()['count'];
 $total_stock = $conn->query("SELECT SUM(stock) as total FROM Product_Variants")->fetch_assoc()['total'] ?: 0;
 $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants WHERE stock <= 5")->fetch_assoc()['count'];
+$zero_stock_count = $conn->query("SELECT COUNT(DISTINCT p.product_id) as count FROM Products p LEFT JOIN Product_Variants pv ON p.product_id = pv.product_id WHERE pv.stock = 0 OR pv.variant_id IS NULL")->fetch_assoc()['count'];
 ?>
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -313,17 +329,17 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
             <header class="bg-white border-b border-gray-200 p-4 flex justify-between items-center header-shadow">
                 <h2 class="text-xl font-semibold text-gray-800">مدیریت محصولات</h2>
                 <div class="flex items-center space-x-4">
-                    <button onclick="openModal('productModal')" class="flex items-center px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all duration-200 shadow-sm hover:shadow-md">
-                        <i data-feather="plus" class="ml-2"></i>
-                        محصول جدید
-                    </button>
+                    <a href="purchases.php" class="flex items-center px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all duration-200 shadow-sm hover:shadow-md">
+                        <i data-feather="shopping-bag" class="ml-2"></i>
+                        خریدها
+                    </a>
                 </div>
             </header>
 
             <!-- Products Content -->
             <main class="p-6">
                 <!-- Stats -->
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
                     <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 card-hover">
                         <div class="flex items-center justify-between">
                             <div>
@@ -371,6 +387,18 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
                             </div>
                         </div>
                     </div>
+
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 card-hover">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-sm text-gray-500 mb-1">تمام شده</p>
+                                <p class="text-2xl font-bold text-gray-800"><?php echo $zero_stock_count; ?></p>
+                            </div>
+                            <div class="p-3 bg-gray-50 rounded-lg">
+                                <i data-feather="x-circle" class="w-6 h-6 text-gray-600"></i>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Products List -->
@@ -380,8 +408,8 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
                     </div>
                     <div class="divide-y divide-gray-100">
                         <?php
-                        $productsResult = $conn->query("SELECT * FROM Products ORDER BY product_id DESC");
-                        $variantStmt = $conn->prepare('SELECT * FROM Product_Variants WHERE product_id = ? ORDER BY variant_id DESC');
+                        $productsResult = $conn->query("SELECT DISTINCT p.* FROM Products p JOIN Product_Variants pv ON p.product_id = pv.product_id WHERE pv.stock > 0 ORDER BY p.product_id DESC");
+                        $variantStmt = $conn->prepare('SELECT * FROM Product_Variants WHERE product_id = ? AND stock > 0 ORDER BY variant_id DESC');
                         ?>
 
                         <?php if ($productsResult->num_rows > 0): ?>
@@ -407,9 +435,6 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
                                         <div class="flex items-center space-x-2">
                                             <button onclick="<?php echo $editProductCallback; ?>" class="p-2 bg-yellow-50 text-yellow-600 rounded-lg hover:bg-yellow-100 transition-colors" title="ویرایش محصول">
                                                 <i data-feather="edit-2" class="w-4 h-4"></i>
-                                            </button>
-                                            <button onclick="<?php echo $openVariantModal; ?>" class="p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors" title="افزودن تنوع">
-                                                <i data-feather="plus" class="w-4 h-4"></i>
                                             </button>
                                             <button onclick="<?php echo $deleteProductCallback; ?>" class="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors" title="حذف محصول">
                                                 <i data-feather="trash-2" class="w-4 h-4"></i>
@@ -472,11 +497,8 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
                                                             </td>
                                                             <td class="px-4 py-3">
                                                                 <div class="flex items-center space-x-2">
-                                                                    <button onclick="<?php echo $editVariantCallback; ?>" class="p-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors" title="ویرایش">
-                                                                        <i data-feather="edit-3" class="w-3.5 h-3.5"></i>
-                                                                    </button>
-                                                                    <button onclick="<?php echo $deleteVariantCallback; ?>" class="p-1.5 bg-red-50 text-red-600 rounded hover:bg-red-100 transition-colors" title="حذف">
-                                                                        <i data-feather="trash" class="w-3.5 h-3.5"></i>
+                                                                    <button onclick="openRechargeModal(<?php echo $variant_id; ?>, '<?php echo $color; ?>', '<?php echo $size; ?>')" class="p-1.5 bg-green-50 text-green-600 rounded hover:bg-green-100 transition-colors" title="شارژ موجودی">
+                                                                        <i data-feather="plus" class="w-3.5 h-3.5"></i>
                                                                     </button>
                                                                 </div>
                                                             </td>
@@ -489,9 +511,6 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
                                         <div class="text-center py-8 text-gray-500">
                                             <i data-feather="package" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
                                             <p>هیچ تنوعی برای این محصول تعریف نشده است</p>
-                                            <button onclick="<?php echo $openVariantModal; ?>" class="mt-3 px-4 py-2 bg-blue-500 text-white text-sm rounded-lg hover:bg-blue-600 transition-colors">
-                                                افزودن اولین تنوع
-                                            </button>
                                         </div>
                                     <?php endif; ?>
                                 </div>
@@ -500,11 +519,7 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
                             <div class="text-center py-16 text-gray-500">
                                 <i data-feather="package" class="w-16 h-16 mx-auto mb-4 opacity-50"></i>
                                 <h3 class="text-lg font-medium text-gray-900 mb-2">هیچ محصولی یافت نشد</h3>
-                                <p class="mb-6">اولین محصول خود را اضافه کنید</p>
-                                <button onclick="openModal('productModal')" class="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors shadow-sm hover:shadow-md">
-                                    <i data-feather="plus" class="ml-2"></i>
-                                    محصول جدید
-                                </button>
+                                <p class="mb-6">محصولات از طریق خرید اضافه می‌شوند</p>
                             </div>
                         <?php endif; ?>
                     </div>
@@ -513,95 +528,9 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
         </div>
     </div>
 
-    <!-- Product Modal -->
-    <div id="productModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50 hidden animate-fade-in">
-        <div class="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 animate-slide-up">
-            <div class="p-6">
-                <div class="flex justify-between items-center mb-6">
-                    <h3 class="text-xl font-semibold text-gray-800">محصول جدید</h3>
-                    <button onclick="closeModal('productModal')" class="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                        <i data-feather="x" class="w-5 h-5"></i>
-                    </button>
-                </div>
-                <form method="POST">
-                    <div class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">نام مدل</label>
-                            <input type="text" name="model_name" required class="w-full border border-gray-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" placeholder="مثال: کت و شلوار کلاسیک">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">دسته‌بندی</label>
-                            <select name="category" required class="w-full border border-gray-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
-                                <option value="">انتخاب دسته‌بندی</option>
-                                <option value="کت و شلوار">کت و شلوار</option>
-                                <option value="کت تک">کت تک</option>
-                                <option value="شلوار">شلوار</option>
-                                <option value="کراوات">کراوات</option>
-                            </select>
-                        </div>
-                        <div class="flex space-x-3 pt-4">
-                            <button type="button" onclick="closeModal('productModal')" class="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">
-                                انصراف
-                            </button>
-                            <button type="submit" name="create_product" class="flex-1 px-4 py-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors shadow-sm hover:shadow-md">
-                                ایجاد محصول
-                            </button>
-                        </div>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
 
-    <!-- Variant Modal -->
-    <div id="variantModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50 hidden animate-fade-in">
-        <div class="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 animate-slide-up">
-            <div class="p-6">
-                <div class="flex justify-between items-center mb-6">
-                    <h3 class="text-xl font-semibold text-gray-800">تنوع محصول جدید</h3>
-                    <button onclick="closeModal('variantModal')" class="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                        <i data-feather="x" class="w-5 h-5"></i>
-                    </button>
-                </div>
-                <form method="POST">
-                    <input type="hidden" name="product_id" id="variant_product_id">
-                    <div class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">رنگ</label>
-                            <input type="text" name="color" required class="w-full border border-gray-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" placeholder="مثال: آبی تیره">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">سایز</label>
-                            <select name="size" required class="w-full border border-gray-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
-                                <option value="">انتخاب سایز</option>
-                                <option value="S">S</option>
-                                <option value="M">M</option>
-                                <option value="L">L</option>
-                                <option value="XL">XL</option>
-                                <option value="XXL">XXL</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">قیمت (تومان)</label>
-                            <input type="number" name="price" required class="w-full border border-gray-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" placeholder="0" min="0">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">موجودی</label>
-                            <input type="number" name="stock" required class="w-full border border-gray-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" placeholder="0" min="0">
-                        </div>
-                        <div class="flex space-x-3 pt-4">
-                            <button type="button" onclick="closeModal('variantModal')" class="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">
-                                انصراف
-                            </button>
-                            <button type="submit" name="create_variant" class="flex-1 px-4 py-2.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors shadow-sm hover:shadow-md">
-                                ایجاد تنوع
-                            </button>
-                        </div>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
+
+
 
     <!-- Edit Product Modal -->
     <div id="editProductModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50 hidden animate-fade-in">
@@ -692,6 +621,41 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
         </div>
     </div>
 
+    <!-- Recharge Variant Modal -->
+    <div id="rechargeVariantModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50 hidden animate-fade-in">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 animate-slide-up">
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-xl font-semibold text-gray-800">شارژ موجودی تنوع</h3>
+                    <button onclick="closeModal('rechargeVariantModal')" class="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+                        <i data-feather="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+                <form method="POST">
+                    <input type="hidden" name="variant_id" id="recharge_variant_id">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">تنوع</label>
+                            <p id="recharge_variant_info" class="text-sm text-gray-600 bg-gray-50 p-3 rounded-lg"></p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">مقدار اضافه شده به موجودی</label>
+                            <input type="number" name="additional_stock" id="recharge_additional_stock" required class="w-full border border-gray-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all" min="1">
+                        </div>
+                        <div class="flex space-x-3 pt-4">
+                            <button type="button" onclick="closeModal('rechargeVariantModal')" class="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">
+                                انصراف
+                            </button>
+                            <button type="submit" name="recharge_variant" class="flex-1 px-4 py-2.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors shadow-sm hover:shadow-md">
+                                شارژ موجودی
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <script>
         feather.replace();
 
@@ -706,9 +670,6 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
         function openModal(modalId, productId = null) {
             document.getElementById(modalId).classList.remove('hidden');
             document.body.style.overflow = 'hidden'; // Prevent background scrolling
-            if (productId && modalId === 'variantModal') {
-                document.getElementById('variant_product_id').value = productId;
-            }
         }
 
         function closeModal(modalId) {
@@ -734,6 +695,14 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
             }
         }
 
+        function openRechargeModal(variantId, color, size) {
+            document.getElementById('recharge_variant_id').value = variantId;
+            document.getElementById('recharge_variant_info').textContent = `رنگ: ${color} - سایز: ${size}`;
+            document.getElementById('recharge_additional_stock').value = '';
+            document.getElementById('rechargeVariantModal').classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        }
+
         function deleteProduct(productId) {
             if (confirm('آیا مطمئن هستید که می‌خواهید این محصول را حذف کنید؟\n\nتوجه: تمام تنوع‌های این محصول نیز حذف خواهند شد.')) {
                 window.location.href = `?delete_product=${productId}`;
@@ -748,7 +717,7 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
 
         // Close modal when clicking outside
         document.addEventListener('click', function(event) {
-            const modals = ['productModal', 'variantModal', 'editProductModal', 'editVariantModal'];
+            const modals = ['productModal', 'editProductModal', 'editVariantModal', 'rechargeVariantModal'];
             modals.forEach(modalId => {
                 const modal = document.getElementById(modalId);
                 if (event.target === modal) {
@@ -760,7 +729,7 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
         // Close modal on Escape key
         document.addEventListener('keydown', function(event) {
             if (event.key === 'Escape') {
-                const modals = ['productModal', 'variantModal', 'editProductModal', 'editVariantModal'];
+                const modals = ['productModal', 'editProductModal', 'editVariantModal', 'rechargeVariantModal'];
                 modals.forEach(modalId => {
                     const modal = document.getElementById(modalId);
                     if (!modal.classList.contains('hidden')) {
