@@ -665,14 +665,6 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                         </div>
                     </div>
                 </div>
-                <div class="mb-6">
-                    <button id="showOutOfStockBtn" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors">
-                        نمایش محصولات و تنوع‌های تمام شده
-                    </button>
-                    <div id="outOfStockDetails" class="mt-4 p-4 bg-white rounded-lg shadow border border-gray-200 max-h-96 overflow-y-auto hidden">
-                        <!-- Out of stock details will be loaded here -->
-                    </div>
-                </div>
 
                 <!-- Filters and Search -->
                 <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
