@@ -499,7 +499,7 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
         .color-option:hover {
             border-color: #3b82f6;
         }
-        
+
         .size-option {
             padding: 8px 12px;
             border: 2px solid #e5e7eb;
@@ -508,24 +508,24 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
             text-align: center;
             transition: all 0.2s;
         }
-        
+
         .size-option.selected {
             border-color: #3b82f6;
             background-color: #eff6ff;
             color: #3b82f6;
             font-weight: 600;
         }
-        
+
         .size-option:hover {
             border-color: #3b82f6;
         }
-        
+
         .size-option.disabled {
             opacity: 0.5;
             cursor: not-allowed;
             background-color: #f9fafb;
         }
-        
+
         .size-option.disabled:hover {
             border-color: #e5e7eb;
         }
@@ -756,7 +756,7 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                                                 <!-- Color Selection -->
                                                 <div id="colorSelection" class="hidden">
                                                     <label class="block text-sm font-medium text-gray-700 mb-2">انتخاب رنگ</label>
-                                                    <div id="colorOptions" class="flex flex-wrap gap-3">
+                                                    <div id="colorOptions" class="flex flex-wrap gap-3 bg-gry-700">
                                                         <!-- Color options will be loaded here -->
                                                     </div>
                                                 </div>
