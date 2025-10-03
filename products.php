@@ -293,6 +293,8 @@ $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants 
                         <i data-feather="package" class="ml-2"></i>محصولات</a></li>
                     <li><a href="sales.php" class="flex items-center px-4 py-2 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
                         <i data-feather="shopping-cart" class="ml-2"></i>فروش‌ها</a></li>
+                    <li><a href="purchases.php" class="flex items-center px-4 py-2 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
+                        <i data-feather="shopping-bag" class="ml-2"></i>خریدها</a></li>
                     <li><a href="returns.php" class="flex items-center px-4 py-2 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
                         <i data-feather="refresh-ccw" class="ml-2"></i>مرجوعی‌ها</a></li>
                 </ul>

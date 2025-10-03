@@ -4,6 +4,8 @@ CREATE DATABASE IF NOT EXISTS suit_store;
 USE suit_store;
 
 -- Drop tables if they exist (in reverse order due to foreign keys)
+DROP TABLE IF EXISTS Purchase_Items;
+DROP TABLE IF EXISTS Purchases;
 DROP TABLE IF EXISTS Sale_Items;
 DROP TABLE IF EXISTS Sales;
 DROP TABLE IF EXISTS Product_Variants;
@@ -58,6 +60,27 @@ CREATE TABLE Sale_Items (
     quantity INT NOT NULL,
     sell_price DECIMAL(10,2) NOT NULL,
     FOREIGN KEY (sale_id) REFERENCES Sales(sale_id) ON DELETE CASCADE,
+    FOREIGN KEY (variant_id) REFERENCES Product_Variants(variant_id) ON DELETE CASCADE
+);
+
+-- Purchases table
+CREATE TABLE Purchases (
+    purchase_id INT AUTO_INCREMENT PRIMARY KEY,
+    supplier_name VARCHAR(255) NOT NULL,
+    purchase_date DATE NOT NULL,
+    status ENUM('pending', 'received', 'cancelled') DEFAULT 'pending',
+    total_amount DECIMAL(12,2) DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Purchase Items table
+CREATE TABLE Purchase_Items (
+    purchase_item_id INT AUTO_INCREMENT PRIMARY KEY,
+    purchase_id INT NOT NULL,
+    variant_id INT NOT NULL,
+    quantity INT NOT NULL,
+    cost_price DECIMAL(10,2) NOT NULL,
+    FOREIGN KEY (purchase_id) REFERENCES Purchases(purchase_id) ON DELETE CASCADE,
     FOREIGN KEY (variant_id) REFERENCES Product_Variants(variant_id) ON DELETE CASCADE
 );
 

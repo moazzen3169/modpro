@@ -296,6 +296,12 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
                         </a>
                     </li>
                     <li>
+                        <a href="purchases.php" class="flex items-center px-4 py-3 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
+                            <i data-feather="shopping-bag" class="ml-2 w-5 h-5"></i>
+                            <span>خریدها</span>
+                        </a>
+                    </li>
+                    <li>
                         <a href="returns.php" class="flex items-center px-4 py-3 bg-blue-50 text-blue-700 rounded-lg border-r-2 border-blue-500">
                             <i data-feather="refresh-ccw" class="ml-2 w-5 h-5"></i>
                             <span>مرجوعی‌ها</span>

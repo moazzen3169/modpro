@@ -150,6 +150,12 @@ while ($row = $top_products_query->fetch_assoc()) {
                         </a>
                     </li>
                     <li>
+                        <a href="purchases.php" class="flex items-center px-4 py-3 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
+                            <i data-feather="shopping-bag" class="ml-2 w-5 h-5"></i>
+                            <span>خریدها</span>
+                        </a>
+                    </li>
+                    <li>
                         <a href="returns.php" class="flex items-center px-4 py-3 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
                             <i data-feather="refresh-ccw" class="ml-2 w-5 h-5"></i>
                             <span>مرجوعی‌ها</span>
