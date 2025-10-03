@@ -307,6 +307,8 @@ $zero_stock_count = $conn->query("SELECT COUNT(DISTINCT p.product_id) as count F
                         <i data-feather="home" class="ml-2"></i>داشبورد</a></li>
                     <li><a href="products.php" class="flex items-center px-4 py-2 bg-blue-50 text-blue-700 rounded-lg transition-colors">
                         <i data-feather="package" class="ml-2"></i>محصولات</a></li>
+                    <li><a href="out_of_stock.php" class="flex items-center px-4 py-2 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
+                        <i data-feather="x-circle" class="ml-2"></i>تمام شده</a></li>
                     <li><a href="purchases.php" class="flex items-center px-4 py-2 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
                         <i data-feather="list" class="ml-2"></i>مشاهده خریدها</a></li>
                     <li><a href="sales.php" class="flex items-center px-4 py-2 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">

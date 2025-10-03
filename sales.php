@@ -565,6 +565,12 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                         </a>
                     </li>
                     <li>
+                        <a href="out_of_stock.php" class="flex items-center px-4 py-3 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
+                            <i data-feather="x-circle" class="ml-2 w-5 h-5"></i>
+                            <span>تمام شده</span>
+                        </a>
+                    </li>
+                    <li>
                         <a href="sales.php" class="flex items-center px-4 py-3 bg-blue-50 text-blue-700 rounded-lg border-r-2 border-blue-500">
                             <i data-feather="shopping-cart" class="ml-2 w-5 h-5"></i>
                             <span>فروش‌ها</span>
