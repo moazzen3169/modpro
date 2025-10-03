@@ -456,21 +456,16 @@ while ($row = $suppliersResult->fetch_assoc()) {
 $suppliersStmt->close();
 
 $allPurchaseItems = $conn->query("
-SELECT pi.*, p.model_name, pv.color, pv.size, pi.quantity, pi.buy_price, (pi.quantity * pi.buy_price) as total_amount, pr.purchase_date
-FROM Purchase_Items pi
+SELECT pr.purchase_date, p.model_name, pv.color, GROUP_CONCAT(DISTINCT pv.size ORDER BY pv.size SEPARATOR ', ') as sizes, SUM(pi.quantity) as total_quantity, AVG(pi.buy_price) as avg_buy_price, SUM(pi.quantity * pi.buy_price) as total_amount
+FROM Purchases pr
+JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
 JOIN Product_Variants pv ON pi.variant_id = pv.variant_id
 JOIN Products p ON pv.product_id = p.product_id
-JOIN Purchases pr ON pi.purchase_id = pr.purchase_id
-ORDER BY pr.purchase_date DESC, pi.purchase_id DESC
+GROUP BY pr.purchase_date, p.model_name, pv.color
+ORDER BY pr.purchase_date DESC
 ");
 
-$groupedProducts = $conn->query("
-SELECT p.product_id, p.model_name, SUM(pv.stock) as total_stock
-FROM Products p
-JOIN Product_Variants pv ON p.product_id = pv.product_id
-GROUP BY p.product_id, p.model_name
-ORDER BY p.model_name
-");
+
 ?>
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -576,25 +571,31 @@ ORDER BY p.model_name
                     <table class="w-full text-sm">
                         <thead class="bg-gray-50">
                             <tr>
-                                <th class="px-4 py-3 text-right font-medium text-gray-700">تاریخ</th>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">نام محصول</th>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">رنگ</th>
-                                <th class="px-4 py-3 text-right font-medium text-gray-700">سایز</th>
-                                <th class="px-4 py-3 text-right font-medium text-gray-700">تعداد</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">سایز ها</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">تعداد کل</th>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">قیمت خرید</th>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">قیمت کل</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">تاریخ</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">عملیات</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-gray-100">
                             <?php while ($item = $allPurchaseItems->fetch_assoc()): ?>
                                 <tr>
-                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['purchase_date'], ENT_QUOTES, 'UTF-8'); ?></td>
                                     <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['model_name'], ENT_QUOTES, 'UTF-8'); ?></td>
                                     <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['color'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['size'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['quantity'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                    <td class="px-4 py-3 text-gray-800"><?php echo number_format($item['buy_price'], 0); ?> تومان</td>
+                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['sizes'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['total_quantity'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td class="px-4 py-3 text-gray-800"><?php echo number_format($item['avg_buy_price'], 0); ?> تومان</td>
                                     <td class="px-4 py-3 text-gray-800"><?php echo number_format($item['total_amount'], 0); ?> تومان</td>
+                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['purchase_date'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td class="px-4 py-3 text-gray-800">
+                                        <button onclick="showDetailedPurchases('<?php echo htmlspecialchars($item['purchase_date'], ENT_QUOTES, 'UTF-8'); ?>', '<?php echo htmlspecialchars($item['model_name'], ENT_QUOTES, 'UTF-8'); ?>', '<?php echo htmlspecialchars($item['color'], ENT_QUOTES, 'UTF-8'); ?>')" class="px-3 py-1 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm">
+                                            نمایش جزئیات
+                                        </button>
+                                    </td>
                                 </tr>
                             <?php endwhile; ?>
                         </tbody>
@@ -602,26 +603,7 @@ ORDER BY p.model_name
                 </div>
             </div>
 
-            <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                <div class="p-6 border-b border-gray-100">
-                    <h3 class="text-lg font-semibold text-gray-800">محصولات دسته بندی شده</h3>
-                </div>
-                <div class="divide-y divide-gray-100">
-                    <?php while ($product = $groupedProducts->fetch_assoc()): ?>
-                        <div class="p-6 hover:bg-gray-50 transition-colors">
-                            <div class="flex justify-between items-center">
-                                <div>
-                                    <h4 class="text-lg font-semibold text-gray-800"><?php echo htmlspecialchars($product['model_name'], ENT_QUOTES, 'UTF-8'); ?></h4>
-                                    <p class="text-sm text-gray-500">کل موجودی: <?php echo number_format($product['total_stock']); ?></p>
-                                </div>
-                                <button onclick="showProductDetails(<?php echo $product['product_id']; ?>)" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
-                                    نمایش جزییات
-                                </button>
-                            </div>
-                        </div>
-                    <?php endwhile; ?>
-                </div>
-            </div>
+
         </div>
     </div>
 
@@ -669,30 +651,35 @@ ORDER BY p.model_name
         </div>
     </div>
 
-    <!-- Product Details Modal -->
-    <div id="productDetailsModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50">
-        <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-4xl shadow-lg rounded-md bg-white">
+
+
+    <!-- Detailed Purchases Modal -->
+    <div id="detailedPurchasesModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50">
+        <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-6xl shadow-lg rounded-md bg-white">
             <div class="mt-3">
                 <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-lg font-medium text-gray-900">جزییات محصول</h3>
-                    <button onclick="closeModal('productDetailsModal')" class="text-gray-400 hover:text-gray-600">
+                    <h3 class="text-lg font-medium text-gray-900">جزییات خریدها</h3>
+                    <button onclick="closeModal('detailedPurchasesModal')" class="text-gray-400 hover:text-gray-600">
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
                     </button>
                 </div>
                 <div class="overflow-x-auto">
-                    <table class="w-full text-sm" id="productDetailsTable">
+                    <table class="w-full text-sm" id="detailedPurchasesTable">
                         <thead class="bg-gray-50">
                             <tr>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">نام محصول</th>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">رنگ</th>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">سایز</th>
-                                <th class="px-4 py-3 text-right font-medium text-gray-700">قیمت</th>
-                                <th class="px-4 py-3 text-right font-medium text-gray-700">موجودی</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">تعداد</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">قیمت خرید</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">قیمت کل</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">تاریخ</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-gray-100">
-                            <!-- Product details will be loaded here -->
+                            <!-- Detailed purchases will be loaded here -->
                         </tbody>
                     </table>
                 </div>
@@ -819,24 +806,30 @@ function addColorSize(itemIndex) {
             button.parentElement.remove();
         }
 
-        function showProductDetails(productId) {
-            fetch(`get_product_variants.php?product_id=${productId}`)
+
+
+        function showDetailedPurchases(purchaseDate, modelName, color) {
+            const url = `get_all_purchase_items.php?purchase_date=${encodeURIComponent(purchaseDate)}&model_name=${encodeURIComponent(modelName)}&color=${encodeURIComponent(color)}`;
+            fetch(url)
                 .then(response => response.json())
                 .then(data => {
-                    const tbody = document.getElementById('productDetailsTable').querySelector('tbody');
+                    const tbody = document.getElementById('detailedPurchasesTable').querySelector('tbody');
                     tbody.innerHTML = '';
-                    data.forEach(variant => {
+                    data.forEach(item => {
                         const row = `<tr>
-                            <td class="px-4 py-3 text-gray-800">${variant.color}</td>
-                            <td class="px-4 py-3 text-gray-800">${variant.size}</td>
-                            <td class="px-4 py-3 text-gray-800">${variant.price}</td>
-                            <td class="px-4 py-3 text-gray-800">${variant.stock}</td>
+                            <td class="px-4 py-3 text-gray-800">${item.model_name}</td>
+                            <td class="px-4 py-3 text-gray-800">${item.color}</td>
+                            <td class="px-4 py-3 text-gray-800">${item.size}</td>
+                            <td class="px-4 py-3 text-gray-800">${item.quantity}</td>
+                            <td class="px-4 py-3 text-gray-800">${item.buy_price} تومان</td>
+                            <td class="px-4 py-3 text-gray-800">${item.total_amount} تومان</td>
+                            <td class="px-4 py-3 text-gray-800">${item.purchase_date}</td>
                         </tr>`;
                         tbody.innerHTML += row;
                     });
-                    openModal('productDetailsModal');
+                    openModal('detailedPurchasesModal');
                 })
-                .catch(error => console.error('Error loading product details:', error));
+                .catch(error => console.error('Error loading detailed purchases:', error));
         }
 
         // Initialize with one item and load data

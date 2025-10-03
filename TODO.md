@@ -1,9 +1,5 @@
-# TODO: Fix Returns Stock Logic
-
-## Tasks
-- [x] Change stock update in handle_create_return from + to -
-- [x] Change stock update in handle_delete_return from - to +
-
-## Details
-- In returns.php, handle_create_return currently adds to stock, but should subtract.
-- In returns.php, handle_delete_return currently subtracts, but should add to restore stock.
+- [ ] Modify purchases.php to group purchase items by date, product name, and color
+- [ ] Update SQL query to use GROUP BY and GROUP_CONCAT for sizes
+- [ ] Change table headers for size and quantity
+- [ ] Update table body to display grouped data
+- [ ] Test the changes on the page
