@@ -1,5 +1,3 @@
-- [ ] Modify purchases.php to group purchase items by date, product name, and color
-- [ ] Update SQL query to use GROUP BY and GROUP_CONCAT for sizes
-- [ ] Change table headers for size and quantity
-- [ ] Update table body to display grouped data
-- [ ] Test the changes on the page
+# TODO for Sorting Purchase Items Table
+
+- [x] Change ORDER BY in purchases.php query to sort by MAX(pr.created_at) DESC for most recent registrations on top
