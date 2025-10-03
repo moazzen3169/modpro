@@ -1,29 +1,6 @@
 <?php
 require_once __DIR__ . '/env/bootstrap.php';
-
-function sanitize_text_field(string $value, string $empty_message): string
-{
-    $trimmed = trim($value);
-    if ($trimmed === '') {
-        throw new InvalidArgumentException($empty_message);
-    }
-
-    return $trimmed;
-}
-
-function validate_price(mixed $value): float
-{
-    if (!is_numeric($value)) {
-        throw new InvalidArgumentException('قیمت وارد شده نامعتبر است.');
-    }
-
-    $price = (float) $value;
-    if ($price <= 0) {
-        throw new InvalidArgumentException('قیمت باید بزرگ‌تر از صفر باشد.');
-    }
-
-    return $price;
-}
+require_once __DIR__ . '/includes/product_helpers.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['create_product'])) {
