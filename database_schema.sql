@@ -81,6 +81,38 @@ CREATE TABLE Return_Items (
     FOREIGN KEY (variant_id) REFERENCES Product_Variants(variant_id) ON DELETE CASCADE
 );
 
+-- Suppliers table
+CREATE TABLE Suppliers (
+    supplier_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    phone VARCHAR(20),
+    email VARCHAR(255),
+    address TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Purchases table (what the store buys from suppliers)
+CREATE TABLE Purchases (
+    purchase_id INT AUTO_INCREMENT PRIMARY KEY,
+    supplier_id INT NOT NULL,
+    purchase_date DATE NOT NULL,
+    payment_method ENUM('cash', 'credit_card', 'bank_transfer') NOT NULL,
+    status ENUM('pending', 'paid') DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (supplier_id) REFERENCES Suppliers(supplier_id) ON DELETE CASCADE
+);
+
+-- Purchase Items table
+CREATE TABLE Purchase_Items (
+    purchase_item_id INT AUTO_INCREMENT PRIMARY KEY,
+    purchase_id INT NOT NULL,
+    variant_id INT NOT NULL,
+    quantity INT NOT NULL,
+    buy_price DECIMAL(10,2) NOT NULL,
+    FOREIGN KEY (purchase_id) REFERENCES Purchases(purchase_id) ON DELETE CASCADE,
+    FOREIGN KEY (variant_id) REFERENCES Product_Variants(variant_id) ON DELETE CASCADE
+);
+
 -- Insert some sample data
 INSERT INTO Customers (name, phone, email) VALUES
 ('مشتری نمونه ۱', '09123456789', 'customer1@example.com'),
