@@ -11,7 +11,7 @@ try {
     exit();
 }
 
-$returnStmt = $conn->prepare('SELECT r.return_id, r.return_date, r.reason, COALESCE(c.name, "") AS customer_name FROM Returns r LEFT JOIN Customers c ON r.customer_id = c.customer_id WHERE r.return_id = ?');
+$returnStmt = $conn->prepare('SELECT r.return_id, r.return_date, r.reason, r.total_amount, p.purchase_id, p.purchase_date, s.name AS supplier_name FROM Returns r JOIN Purchases p ON r.purchase_id = p.purchase_id JOIN Suppliers s ON r.supplier_id = s.supplier_id WHERE r.return_id = ?');
 $returnStmt->bind_param('i', $return_id);
 $returnStmt->execute();
 $return = $returnStmt->get_result()->fetch_assoc();
@@ -24,14 +24,17 @@ if (!$return) {
     exit();
 }
 
-$itemsStmt = $conn->prepare('SELECT ri.quantity, ri.return_price, p.model_name, pv.color, pv.size FROM Return_Items ri JOIN Product_Variants pv ON ri.variant_id = pv.variant_id JOIN Products p ON pv.product_id = p.product_id WHERE ri.return_id = ? ORDER BY ri.return_item_id');
+$itemsStmt = $conn->prepare('SELECT ri.quantity, ri.return_price, pr.model_name, pv.color, pv.size FROM Return_Items ri JOIN Product_Variants pv ON ri.variant_id = pv.variant_id JOIN Products pr ON pv.product_id = pr.product_id WHERE ri.return_id = ? ORDER BY ri.return_item_id');
 $itemsStmt->bind_param('i', $return_id);
 $itemsStmt->execute();
 $itemsResult = $itemsStmt->get_result();
 
-$customer_name = htmlspecialchars($return['customer_name'] ?: 'مشتری حضوری', ENT_QUOTES, 'UTF-8');
+$supplier_name = htmlspecialchars((string) $return['supplier_name'], ENT_QUOTES, 'UTF-8');
+$purchase_id = (int) $return['purchase_id'];
+$purchase_date = htmlspecialchars((string) $return['purchase_date'], ENT_QUOTES, 'UTF-8');
 $return_date = htmlspecialchars((string) $return['return_date'], ENT_QUOTES, 'UTF-8');
 $reason = htmlspecialchars((string) ($return['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
+$total_amount = number_format((float) ($return['total_amount'] ?? 0), 0);
 
 echo '<div class="space-y-6">';
 
@@ -42,16 +45,24 @@ echo '<div class="bg-gray-50 p-4 rounded-lg">
                 <p class="text-gray-600">#مرجوعی-' . $return_id . '</p>
             </div>
             <div>
-                <h4 class="font-medium text-gray-800">مشتری</h4>
-                <p class="text-gray-600">' . $customer_name . '</p>
+                <h4 class="font-medium text-gray-800">تأمین‌کننده</h4>
+                <p class="text-gray-600">' . $supplier_name . '</p>
             </div>
             <div>
                 <h4 class="font-medium text-gray-800">تاریخ</h4>
                 <p class="text-gray-600">' . $return_date . '</p>
             </div>
             <div>
+                <h4 class="font-medium text-gray-800">شماره خرید</h4>
+                <p class="text-gray-600">#خرید-' . $purchase_id . ' (' . $purchase_date . ')</p>
+            </div>
+            <div class="col-span-2">
                 <h4 class="font-medium text-gray-800">دلیل</h4>
                 <p class="text-gray-600">' . ($reason !== '' ? $reason : '—') . '</p>
+            </div>
+            <div class="col-span-2">
+                <h4 class="font-medium text-gray-800">مبلغ مرجوعی</h4>
+                <p class="text-gray-600">' . $total_amount . ' تومان</p>
             </div>
         </div>
       </div>';
