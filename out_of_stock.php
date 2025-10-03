@@ -122,34 +122,8 @@ while ($row = $result->fetch_assoc()) {
 
     <div class="flex h-screen overflow-hidden">
         <!-- Sidebar -->
-        <aside class="w-64 bg-white border-l border-gray-200 flex flex-col sidebar-shadow">
-            <div class="p-6 border-b border-gray-200">
-                <h1 class="text-xl font-bold text-gray-800">SuitStore Pro</h1>
-            </div>
-            <nav class="flex-1 p-4">
-                <ul class="space-y-2">
-                    <li><a href="index.php" class="flex items-center px-4 py-2 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
-                        <i data-feather="home" class="ml-2"></i>داشبورد</a></li>
-                    <li><a href="products.php" class="flex items-center px-4 py-2 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
-                        <i data-feather="package" class="ml-2"></i>محصولات</a></li>
-                    <li><a href="out_of_stock.php" class="flex items-center px-4 py-2 bg-red-50 text-red-700 rounded-lg transition-colors">
-                        <i data-feather="x-circle" class="ml-2"></i>تمام شده</a></li>
-                    <li><a href="purchases.php" class="flex items-center px-4 py-2 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
-                        <i data-feather="list" class="ml-2"></i>مشاهده خریدها</a></li>
-                    <li><a href="sales.php" class="flex items-center px-4 py-2 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
-                        <i data-feather="shopping-cart" class="ml-2"></i>فروش‌ها</a></li>
-                    <li><a href="returns.php" class="flex items-center px-4 py-2 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
-                        <i data-feather="refresh-ccw" class="ml-2"></i>مرجوعی‌ها</a></li>
-                </ul>
-            </nav>
-            <div class="p-4 border-t border-gray-200">
-                <a href="logout.php" class="flex items-center justify-center px-4 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition">
-                    <i data-feather="log-out" class="ml-2 w-4 h-4"></i>
-                    خروج از حساب
-                </a>
-            </div>
-        </aside>
-
+        <?php include 'sidebar.php'; ?>
+        
         <!-- Main Content -->
         <div class="flex-1 overflow-auto custom-scrollbar">
             <!-- Header -->
