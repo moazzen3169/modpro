@@ -32,7 +32,7 @@ function handle_create_return(mysqli $conn): void
 
         $variantStmt = $conn->prepare('SELECT price FROM Product_Variants WHERE variant_id = ? FOR UPDATE');
         $insertItemStmt = $conn->prepare('INSERT INTO Return_Items (return_id, variant_id, quantity, return_price) VALUES (?, ?, ?, ?)');
-        $updateStockStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?');
+        $updateStockStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock - ? WHERE variant_id = ?');
 
         foreach ($items as $item) {
             $variant_id = $item['variant_id'];
@@ -88,7 +88,7 @@ function handle_delete_return(mysqli $conn): void
         $itemsStmt->execute();
         $itemsResult = $itemsStmt->get_result();
 
-        $decreaseStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock - ? WHERE variant_id = ?');
+        $decreaseStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?');
         while ($item = $itemsResult->fetch_assoc()) {
             $quantity = (int) $item['quantity'];
             if ($quantity <= 0) {
