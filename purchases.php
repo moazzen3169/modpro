@@ -323,45 +323,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = $_POST['action'];
 
         if ($action === 'create_purchase') {
-            $supplierId = (int) ($_POST['supplier_id'] ?? 0);
+            $supplierId = 1; // default supplier
             $purchaseDate = $_POST['purchase_date'] ?? '';
-            $paymentMethod = $_POST['payment_method'] ?? '';
-            $status = $_POST['status'] ?? '';
-            $items = json_decode($_POST['items'] ?? '[]', true);
+            $paymentMethod = 'cash';
+            $status = 'completed';
+            $items = $_POST['items'] ?? [];
 
             $errors = [];
 
-            if ($supplierId <= 0) {
-                $errors[] = 'تامین‌کننده معتبر انتخاب کنید.';
-            }
-
             if (empty($purchaseDate) || !strtotime($purchaseDate)) {
                 $errors[] = 'تاریخ خرید معتبر وارد کنید.';
-            }
-
-            if (empty($paymentMethod)) {
-                $errors[] = 'روش پرداخت را انتخاب کنید.';
-            }
-
-            if (empty($status)) {
-                $errors[] = 'وضعیت خرید را انتخاب کنید.';
             }
 
             if (empty($items) || !is_array($items)) {
                 $errors[] = 'حداقل یک آیتم اضافه کنید.';
             } else {
                 foreach ($items as $item) {
-                    if (!isset($item['variant_id']) || $item['variant_id'] <= 0) {
-                        $errors[] = 'آیتم نامعتبر.';
+                    $product_name = trim($item['product_name'] ?? '');
+                    $color_sizes = $item['color_sizes'] ?? [];
+                    $quantity = (int) ($item['quantity'] ?? 0);
+                    $buy_price = (float) ($item['buy_price'] ?? 0);
+                    if (empty($product_name) || empty($color_sizes) || $quantity <= 0 || $buy_price <= 0) {
+                        $errors[] = 'اطلاعات آیتم نامعتبر.';
                         break;
                     }
-                    if (!isset($item['quantity']) || $item['quantity'] <= 0) {
-                        $errors[] = 'تعداد باید بیشتر از صفر باشد.';
-                        break;
-                    }
-                    if (!isset($item['buy_price']) || $item['buy_price'] <= 0) {
-                        $errors[] = 'قیمت خرید باید بیشتر از صفر باشد.';
-                        break;
+                    foreach ($color_sizes as $cs) {
+                        if (empty($cs['color']) || empty($cs['sizes'])) {
+                            $errors[] = 'اطلاعات رنگ و سایز نامعتبر.';
+                            break 2;
+                        }
                     }
                 }
             }
@@ -379,30 +369,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $purchaseId = $conn->insert_id;
                     $insertPurchaseStmt->close();
 
-                    // Insert items and update stock
+                    // Process items
                     foreach ($items as $item) {
-                        $variantId = (int) $item['variant_id'];
+                        $product_name = trim($item['product_name']);
+                        $color_sizes = $item['color_sizes'];
                         $quantity = (int) $item['quantity'];
-                        $buyPrice = (float) $item['buy_price'];
+                        $buy_price = (float) $item['buy_price'];
 
-                        $insertItemStmt = $conn->prepare(
-                            'INSERT INTO Purchase_Items (purchase_id, variant_id, quantity, buy_price) VALUES (?, ?, ?, ?)'
-                        );
-                        $insertItemStmt->bind_param('iiid', $purchaseId, $variantId, $quantity, $buyPrice);
-                        $insertItemStmt->execute();
-                        $insertItemStmt->close();
+                        // Find or create product
+                        $stmt = $conn->prepare('SELECT product_id FROM Products WHERE model_name = ?');
+                        $stmt->bind_param('s', $product_name);
+                        $stmt->execute();
+                        $result = $stmt->get_result();
+                        if ($row = $result->fetch_assoc()) {
+                            $product_id = $row['product_id'];
+                        } else {
+                            $empty_category = '';
+                            $stmt = $conn->prepare('INSERT INTO Products (model_name, category) VALUES (?, ?)');
+                            $stmt->bind_param('ss', $product_name, $empty_category);
+                            $stmt->execute();
+                            $product_id = $conn->insert_id;
+                        }
+                        $stmt->close();
 
-                        // Update stock
-                        $updateStockStmt = $conn->prepare(
-                            'UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?'
-                        );
-                        $updateStockStmt->bind_param('ii', $quantity, $variantId);
-                        $updateStockStmt->execute();
-                        $updateStockStmt->close();
+                    foreach ($color_sizes as $cs) {
+                        $color = trim($cs['color']);
+                        $sizes = $cs['sizes'];
+                        foreach ($sizes as $size) {
+                            // Find or create variant
+                            $stmt = $conn->prepare('SELECT variant_id FROM Product_Variants WHERE product_id = ? AND color = ? AND size = ?');
+                            $stmt->bind_param('iss', $product_id, $color, $size);
+                            $stmt->execute();
+                            $result = $stmt->get_result();
+                            if ($row = $result->fetch_assoc()) {
+                                $variant_id = $row['variant_id'];
+                            } else {
+                                $initial_stock = 0;
+                                $stmt = $conn->prepare('INSERT INTO Product_Variants (product_id, color, size, price, stock) VALUES (?, ?, ?, ?, ?)');
+                                $stmt->bind_param('issdi', $product_id, $color, $size, $buy_price, $initial_stock);
+                                $stmt->execute();
+                                $variant_id = $conn->insert_id;
+                            }
+                            $stmt->close();
+
+                                // Insert purchase_item
+                                $stmt = $conn->prepare('INSERT INTO Purchase_Items (purchase_id, variant_id, quantity, buy_price) VALUES (?, ?, ?, ?)');
+                                $stmt->bind_param('iiid', $purchaseId, $variant_id, $quantity, $buy_price);
+                                $stmt->execute();
+                                $stmt->close();
+
+                                // Update stock
+                                $stmt = $conn->prepare('UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?');
+                                $stmt->bind_param('ii', $quantity, $variant_id);
+                                $stmt->execute();
+                                $stmt->close();
+                            }
+                        }
                     }
 
                     $conn->commit();
-                    set_flash_message('success', 'خرید با موفقیت ثبت شد.');
+add_flash_message('success', 'خرید با موفقیت ثبت شد.');
                 } catch (Exception $e) {
                     $conn->rollback();
                     $errors[] = 'خطا در ثبت خرید: ' . $e->getMessage();
@@ -410,7 +436,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if (!empty($errors)) {
-                set_flash_message('error', implode('<br>', $errors));
+add_flash_message('error', implode('<br>', $errors));
             }
 
             header('Location: purchases.php');
@@ -429,7 +455,22 @@ while ($row = $suppliersResult->fetch_assoc()) {
 }
 $suppliersStmt->close();
 
-$monthlySummaries = build_monthly_summaries($conn);
+$allPurchaseItems = $conn->query("
+SELECT pi.*, p.model_name, pv.color, pv.size, pi.quantity, pi.buy_price, (pi.quantity * pi.buy_price) as total_amount, pr.purchase_date
+FROM Purchase_Items pi
+JOIN Product_Variants pv ON pi.variant_id = pv.variant_id
+JOIN Products p ON pv.product_id = p.product_id
+JOIN Purchases pr ON pi.purchase_id = pr.purchase_id
+ORDER BY pr.purchase_date DESC, pi.purchase_id DESC
+");
+
+$groupedProducts = $conn->query("
+SELECT p.product_id, p.model_name, SUM(pv.stock) as total_stock
+FROM Products p
+JOIN Product_Variants pv ON p.product_id = pv.product_id
+GROUP BY p.product_id, p.model_name
+ORDER BY p.model_name
+");
 ?>
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -527,125 +568,60 @@ $monthlySummaries = build_monthly_summaries($conn);
                 </div>
             <?php endif; ?>
 
-            <?php if (empty($monthlySummaries)): ?>
-                <p class="text-gray-600">هیچ خریدی ثبت نشده است.</p>
-            <?php else: ?>
-                <?php foreach ($monthlySummaries as $month): ?>
-                    <?php
-                        $year = (int) $month['year'];
-                        $monthNum = (int) $month['month'];
-                        $purchasesCount = (int) $month['purchases_count'];
-                        $grossPurchases = (float) $month['gross_purchases'];
-                        $returnsAmount = (float) $month['total_returns'];
-                        $openingBalance = (float) $month['opening_balance'];
-                        $closingBalance = (float) $month['closing_balance'];
-                        $netChange = (float) $month['net_change'];
-                        $monthName = get_month_name($monthNum);
-                        $details = get_purchase_details($conn, $year, $monthNum);
-                    ?>
-                    <div class="month-summary" id="month-summary-<?php echo $year . '-' . $monthNum; ?>">
-                        <div class="month-header" onclick="toggleDetails('<?php echo $year . '-' . $monthNum; ?>')">
-                            <div class="flex flex-col sm:flex-row sm:items-center sm:gap-4">
-                                <span><?php echo "{$monthName} {$year}"; ?> (<?php echo $purchasesCount; ?> خرید)</span>
-                                <span class="text-sm text-gray-500">خالص بدهی: <?php echo number_format($netChange, 0); ?> تومان</span>
-                            </div>
-                            <svg class="toggle-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" >
-                                <polyline points="6 9 12 15 18 9"></polyline>
-                            </svg>
-                        </div>
-                        <div class="month-details hidden p-4">
-                            <div class="summary-table">
-                                <table>
-                                    <thead>
-                                        <tr>
-                                            <th>خرید ناخالص</th>
-                                            <th>مرجوعی‌ها</th>
-                                            <th>بدهی قبلی</th>
-                                            <th>بدهی جدید</th>
-                                            <th>مانده پایان ماه</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <tr>
-                                            <td><?php echo number_format($grossPurchases, 0); ?></td>
-                                            <td><?php echo number_format($returnsAmount, 0); ?></td>
-                                            <td><?php echo number_format($openingBalance, 0); ?></td>
-                                            <td><?php echo number_format($netChange, 0); ?></td>
-                                            <td><?php echo number_format($closingBalance, 0); ?></td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+                <div class="p-6 border-b border-gray-100">
+                    <h3 class="text-lg font-semibold text-gray-800">همه ردیف های محصولات خرید</h3>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">تاریخ</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">نام محصول</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">رنگ</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">سایز</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">تعداد</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">قیمت خرید</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">قیمت کل</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100">
+                            <?php while ($item = $allPurchaseItems->fetch_assoc()): ?>
+                                <tr>
+                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['purchase_date'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['model_name'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['color'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['size'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['quantity'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td class="px-4 py-3 text-gray-800"><?php echo number_format($item['buy_price'], 0); ?> تومان</td>
+                                    <td class="px-4 py-3 text-gray-800"><?php echo number_format($item['total_amount'], 0); ?> تومان</td>
+                                </tr>
+                            <?php endwhile; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
 
-                            <?php if (!empty($month['suppliers'])): ?>
-                                <div class="summary-table mt-4">
-                                    <table>
-                                        <thead>
-                                            <tr>
-                                                <th>تامین‌کننده</th>
-                                                <th>خرید ناخالص</th>
-                                                <th>مرجوعی‌ها</th>
-                                                <th>بدهی قبلی</th>
-                                                <th>بدهی جدید</th>
-                                                <th>مانده پایان ماه</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php foreach ($month['suppliers'] as $supplierSummary): ?>
-                                                <tr>
-                                                    <td><?php echo htmlspecialchars($supplierSummary['supplier_name'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                                    <td><?php echo number_format($supplierSummary['gross_purchases'], 0); ?></td>
-                                                    <td><?php echo number_format($supplierSummary['total_returns'], 0); ?></td>
-                                                    <td><?php echo number_format($supplierSummary['opening_balance'], 0); ?></td>
-                                                    <td><?php echo number_format($supplierSummary['net_change'], 0); ?></td>
-                                                    <td><?php echo number_format($supplierSummary['closing_balance'], 0); ?></td>
-                                                </tr>
-                                            <?php endforeach; ?>
-                                        </tbody>
-                                    </table>
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                <div class="p-6 border-b border-gray-100">
+                    <h3 class="text-lg font-semibold text-gray-800">محصولات دسته بندی شده</h3>
+                </div>
+                <div class="divide-y divide-gray-100">
+                    <?php while ($product = $groupedProducts->fetch_assoc()): ?>
+                        <div class="p-6 hover:bg-gray-50 transition-colors">
+                            <div class="flex justify-between items-center">
+                                <div>
+                                    <h4 class="text-lg font-semibold text-gray-800"><?php echo htmlspecialchars($product['model_name'], ENT_QUOTES, 'UTF-8'); ?></h4>
+                                    <p class="text-sm text-gray-500">کل موجودی: <?php echo number_format($product['total_stock']); ?></p>
                                 </div>
-                            <?php endif; ?>
-
-                            <div class="details-table mt-6">
-                                <table>
-                                    <thead>
-                                        <tr>
-                                            <th>شماره خرید</th>
-                                            <th>تاریخ</th>
-                                            <th>تامین‌کننده</th>
-                                            <th>نام محصول</th>
-                                            <th>رنگ</th>
-                                            <th>سایز</th>
-                                            <th>تعداد</th>
-                                            <th>قیمت خرید (تومان)</th>
-                                            <th>قیمت کل (تومان)</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($details as $detail): ?>
-                                            <tr>
-                                                <td>#خرید-<?php echo htmlspecialchars($detail['purchase_id'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                                <td><?php echo htmlspecialchars($detail['purchase_date'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                                <td><?php echo htmlspecialchars($detail['supplier_name'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                                <td><?php echo htmlspecialchars($detail['model_name'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                                <td><?php echo htmlspecialchars($detail['color'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                                <td><?php echo htmlspecialchars($detail['size'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                                <td><?php echo htmlspecialchars($detail['quantity'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                                <td><?php echo number_format($detail['buy_price'], 0); ?></td>
-                                                <td><?php echo number_format($detail['total_amount'], 0); ?></td>
-                                            </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
+                                <button onclick="showProductDetails(<?php echo $product['product_id']; ?>)" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
+                                    نمایش جزییات
+                                </button>
                             </div>
-
-                            <?php if (empty($details)): ?>
-                                <p class="mt-4 text-sm text-gray-500">در این ماه خریدی برای نمایش وجود ندارد.</p>
-                            <?php endif; ?>
                         </div>
-                    </div>
-                <?php endforeach; ?>
-            <?php endif; ?>
+                    <?php endwhile; ?>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -663,37 +639,9 @@ $monthlySummaries = build_monthly_summaries($conn);
                 </div>
                 <form id="purchaseForm" method="POST" action="purchases.php">
                     <input type="hidden" name="action" value="create_purchase">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">تامین‌کننده</label>
-                            <select name="supplier_id" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <option value="">انتخاب تامین‌کننده</option>
-                                <?php foreach ($suppliers as $supplier): ?>
-                                    <option value="<?php echo $supplier['supplier_id']; ?>"><?php echo htmlspecialchars($supplier['name'], ENT_QUOTES, 'UTF-8'); ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">تاریخ خرید</label>
-                            <input type="date" name="purchase_date" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">روش پرداخت</label>
-                            <select name="payment_method" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <option value="">انتخاب روش پرداخت</option>
-                                <option value="cash">نقدی</option>
-                                <option value="credit">اعتباری</option>
-                                <option value="check">چک</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">وضعیت</label>
-                            <select name="status" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <option value="">انتخاب وضعیت</option>
-                                <option value="completed">تکمیل شده</option>
-                                <option value="pending">در انتظار</option>
-                            </select>
-                        </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">تاریخ خرید</label>
+                        <input type="date" name="purchase_date" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
 
                     <div class="mb-4">
@@ -717,6 +665,37 @@ $monthlySummaries = build_monthly_summaries($conn);
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Product Details Modal -->
+    <div id="productDetailsModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50">
+        <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-4xl shadow-lg rounded-md bg-white">
+            <div class="mt-3">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">جزییات محصول</h3>
+                    <button onclick="closeModal('productDetailsModal')" class="text-gray-400 hover:text-gray-600">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm" id="productDetailsTable">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">رنگ</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">سایز</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">قیمت</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">موجودی</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100">
+                            <!-- Product details will be loaded here -->
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
@@ -751,22 +730,32 @@ $monthlySummaries = build_monthly_summaries($conn);
         function addPurchaseItem() {
             const itemsContainer = document.getElementById('purchaseItems');
             const itemDiv = document.createElement('div');
-            itemDiv.className = 'flex space-x-2 items-end bg-gray-50 p-3 rounded-md';
+            itemDiv.className = 'bg-gray-50 p-3 rounded-md';
             itemDiv.innerHTML = `
-                <div class="flex-1">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">محصول</label>
-                    <select name="items[${itemIndex}][variant_id]" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" onchange="loadProductPrice(this, ${itemIndex})">
-                        <option value="">انتخاب محصول</option>
-                        <!-- Options will be loaded via AJAX -->
-                    </select>
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">نام محصول</label>
+                    <input type="text" name="items[${itemIndex}][product_name]" list="productNames" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
-                <div class="w-24">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">تعداد</label>
-                    <input type="number" name="items[${itemIndex}][quantity]" min="1" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <div class="mb-4">
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="block text-sm font-medium text-gray-700">رنگ‌ها و سایزها</label>
+                        <button type="button" onclick="addColorSize(${itemIndex})" class="px-3 py-1 bg-green-500 text-white rounded-md hover:bg-green-600 text-sm">
+                            افزودن رنگ
+                        </button>
+                    </div>
+                    <div id="colorSizesContainer-${itemIndex}" class="space-y-2">
+                        <!-- Color-size pairs will be added here -->
+                    </div>
                 </div>
-                <div class="w-32">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">قیمت خرید</label>
-                    <input type="number" name="items[${itemIndex}][buy_price]" min="0" step="0.01" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">تعداد کل</label>
+                        <input type="number" name="items[${itemIndex}][quantity]" min="1" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">قیمت خرید</label>
+                        <input type="number" name="items[${itemIndex}][buy_price]" min="0" step="0.01" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
                 </div>
                 <button type="button" onclick="removePurchaseItem(this)" class="px-2 py-2 bg-red-500 text-white rounded-md hover:bg-red-600">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -775,49 +764,111 @@ $monthlySummaries = build_monthly_summaries($conn);
                 </button>
             `;
             itemsContainer.appendChild(itemDiv);
-            loadProductVariants(itemIndex);
             itemIndex++;
+        }
+
+function addColorSize(itemIndex) {
+            const container = document.getElementById(`colorSizesContainer-${itemIndex}`);
+            const colorIndex = container.children.length;
+            const colorDiv = document.createElement('div');
+            colorDiv.className = 'bg-white p-2 rounded-md border';
+            colorDiv.innerHTML = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">رنگ</label>
+                        <input type="text" name="items[${itemIndex}][color_sizes][${colorIndex}][color]" list="colorNames" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">سایزها</label>
+                        <div class="flex flex-wrap gap-2">
+                            <label class="flex items-center">
+                                <input type="checkbox" name="items[${itemIndex}][color_sizes][${colorIndex}][sizes][]" value="S" class="mr-1">
+                                S
+                            </label>
+                            <label class="flex items-center">
+                                <input type="checkbox" name="items[${itemIndex}][color_sizes][${colorIndex}][sizes][]" value="M" class="mr-1">
+                                M
+                            </label>
+                            <label class="flex items-center">
+                                <input type="checkbox" name="items[${itemIndex}][color_sizes][${colorIndex}][sizes][]" value="L" class="mr-1">
+                                L
+                            </label>
+                            <label class="flex items-center">
+                                <input type="checkbox" name="items[${itemIndex}][color_sizes][${colorIndex}][sizes][]" value="XL" class="mr-1">
+                                XL
+                            </label>
+                            <label class="flex items-center">
+                                <input type="checkbox" name="items[${itemIndex}][color_sizes][${colorIndex}][sizes][]" value="XXL" class="mr-1">
+                                XXL
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <button type="button" onclick="removeColorSize(this)" class="px-2 py-1 bg-red-500 text-white rounded-md hover:bg-red-600 text-sm">
+                    حذف رنگ
+                </button>
+            `;
+            container.appendChild(colorDiv);
+        }
+
+        function removeColorSize(button) {
+            button.parentElement.remove();
         }
 
         function removePurchaseItem(button) {
             button.parentElement.remove();
         }
 
-        function loadProductVariants(index) {
-            fetch('get_product_variants.php')
+        function showProductDetails(productId) {
+            fetch(`get_product_variants.php?product_id=${productId}`)
                 .then(response => response.json())
                 .then(data => {
-                    const select = document.querySelector(`select[name="items[${index}][variant_id]"]`);
-                    select.innerHTML = '<option value="">انتخاب محصول</option>';
+                    const tbody = document.getElementById('productDetailsTable').querySelector('tbody');
+                    tbody.innerHTML = '';
                     data.forEach(variant => {
-                        const option = document.createElement('option');
-                        option.value = variant.variant_id;
-                        option.textContent = `${variant.model_name} - ${variant.color} - ${variant.size}`;
-                        select.appendChild(option);
+                        const row = `<tr>
+                            <td class="px-4 py-3 text-gray-800">${variant.color}</td>
+                            <td class="px-4 py-3 text-gray-800">${variant.size}</td>
+                            <td class="px-4 py-3 text-gray-800">${variant.price}</td>
+                            <td class="px-4 py-3 text-gray-800">${variant.stock}</td>
+                        </tr>`;
+                        tbody.innerHTML += row;
                     });
+                    openModal('productDetailsModal');
                 })
-                .catch(error => console.error('Error loading product variants:', error));
+                .catch(error => console.error('Error loading product details:', error));
         }
 
-        function loadProductPrice(select, index) {
-            const variantId = select.value;
-            if (variantId) {
-                fetch(`get_product_price.php?variant_id=${variantId}`)
-                    .then(response => response.json())
-                    .then(data => {
-                        const priceInput = document.querySelector(`input[name="items[${index}][buy_price]"]`);
-                        if (data.buy_price) {
-                            priceInput.value = data.buy_price;
-                        }
-                    })
-                    .catch(error => console.error('Error loading product price:', error));
-            }
-        }
-
-        // Initialize with one item
+        // Initialize with one item and load data
         document.addEventListener('DOMContentLoaded', function() {
             addPurchaseItem();
+            // Load product names
+            fetch('get_product_names.php')
+                .then(response => response.json())
+                .then(data => {
+                    const datalist = document.getElementById('productNames');
+                    data.forEach(name => {
+                        const option = document.createElement('option');
+                        option.value = name;
+                        datalist.appendChild(option);
+                    });
+                })
+                .catch(error => console.error('Error loading product names:', error));
+            // Load colors
+            fetch('get_product_colors.php')
+                .then(response => response.json())
+                .then(data => {
+                    const datalist = document.getElementById('colorNames');
+                    data.forEach(color => {
+                        const option = document.createElement('option');
+                        option.value = color;
+                        datalist.appendChild(option);
+                    });
+                })
+                .catch(error => console.error('Error loading colors:', error));
         });
     </script>
+    <datalist id="productNames"></datalist>
+    <datalist id="colorNames"></datalist>
 </body>
 </html>

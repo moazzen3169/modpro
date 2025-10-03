@@ -1,25 +1,26 @@
-# TODO List for Modifying SuitStore Manager Pro
+# Header Unification Task
 
-## Products Page (products.php)
-- [ ] Remove "محصول جدید" button from header
-- [ ] Add link to purchases.php in header
-- [ ] Modify product list query to show only products with stock > 0
-- [ ] Add count of zero stock products in stats
-- [ ] Remove add product modal
-- [ ] Remove add variant modal
-- [ ] Add recharge button for variants (update stock)
-- [ ] Create recharge modal for updating stock
-- [ ] Update variant table to show recharge instead of edit/delete
+## Plan Overview
+Unify all headers across main pages to match products.php header style using a reusable header.php file.
 
-## Purchases Page (purchases.php)
-- [ ] Remove supplier-related code and functions
-- [ ] Simplify form: date, product name (select or new), colors (multiple), sizes per color, purchase price
-- [ ] Modify handle_create_purchase to create product/variants if new
-- [ ] Update display to group by product with total qty
-- [ ] Remove supplier balance calculations
+## Steps to Complete
+- [ ] Create reusable header.php file with parameters for title and actions
+- [ ] Update products.php to use header.php
+- [ ] Update index.php to use header.php
+- [ ] Update purchases.php to use header.php
+- [ ] Update returns.php to use header.php
+- [ ] Update out_of_stock.php to use header.php
+- [ ] Update sales.php to use header.php
 
-## Sales Page (sales.php)
-- [ ] Remove customer select from new sale modal
-- [ ] Remove status select from new sale modal
-- [ ] Update handle_create_sale to set customer_id=0, status='paid'
-- [ ] Remove customer and status from edit sale modal
+## Information Gathered
+- Header structure varies across pages with different CSS classes and content
+- products.php header style should be the standard (bg-white, border-b, p-4, flex justify-between, header-shadow)
+- Right-side content needs to be page-specific but consistently styled
+
+## Dependent Files
+- Create: header.php
+- Update: products.php, index.php, purchases.php, returns.php, out_of_stock.php, sales.php
+
+## Followup Steps
+- Test all pages to ensure headers render correctly
+- Verify responsive behavior and styling consistency
