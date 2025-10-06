@@ -20,36 +20,46 @@ $current_page = basename($_SERVER['PHP_SELF'], '.php');
                     <span>داشبورد</span>
                 </a>
             </li>
-            <li>
-                <a href="products.php" class="flex items-center px-4 py-3 <?php echo $current_page === 'products' ? 'bg-blue-50 text-blue-700 rounded-lg border-r-2 border-blue-500' : 'text-gray-700 rounded-lg hover:bg-gray-100 transition-colors'; ?>">
-                    <i data-feather="package" class="ml-2 w-5 h-5"></i>
-                    <span>محصولات</span>
-                </a>
-            </li>
-            <li>
-                <a href="out_of_stock.php" class="flex items-center px-4 py-3 <?php echo $current_page === 'out_of_stock' ? 'bg-blue-50 text-blue-700 rounded-lg border-r-2 border-blue-500' : 'text-gray-700 rounded-lg hover:bg-gray-100 transition-colors'; ?>">
-                    <i data-feather="x-circle" class="ml-2 w-5 h-5"></i>
-                    <span>تمام شده</span>
-                </a>
-            </li>
+
             <li>
                 <a href="sales.php" class="flex items-center px-4 py-3 <?php echo $current_page === 'sales' ? 'bg-blue-50 text-blue-700 rounded-lg border-r-2 border-blue-500' : 'text-gray-700 rounded-lg hover:bg-gray-100 transition-colors'; ?>">
                     <i data-feather="shopping-cart" class="ml-2 w-5 h-5"></i>
                     <span>فروش‌ها</span>
                 </a>
             </li>
+
             <li>
                 <a href="purchases.php" class="flex items-center px-4 py-3 <?php echo $current_page === 'purchases' ? 'bg-blue-50 text-blue-700 rounded-lg border-r-2 border-blue-500' : 'text-gray-700 rounded-lg hover:bg-gray-100 transition-colors'; ?>">
                     <i data-feather="list" class="ml-2 w-5 h-5"></i>
-                    <span>مشاهده خریدها</span>
+                    <span> خریدها</span>
                 </a>
             </li>
+
+            <li>
+                <a href="products.php" class="flex items-center px-4 py-3 <?php echo $current_page === 'products' ? 'bg-blue-50 text-blue-700 rounded-lg border-r-2 border-blue-500' : 'text-gray-700 rounded-lg hover:bg-gray-100 transition-colors'; ?>">
+                    <i data-feather="package" class="ml-2 w-5 h-5"></i>
+                    <span>مدیریت موجودی</span>
+                </a>
+            </li>
+
+
+
             <li>
                 <a href="returns.php" class="flex items-center px-4 py-3 <?php echo $current_page === 'returns' ? 'bg-blue-50 text-blue-700 rounded-lg border-r-2 border-blue-500' : 'text-gray-700 rounded-lg hover:bg-gray-100 transition-colors'; ?>">
                     <i data-feather="refresh-ccw" class="ml-2 w-5 h-5"></i>
                     <span>مرجوعی‌ها</span>
                 </a>
             </li>
+
+            <li>
+                <a href="out_of_stock.php" class="flex items-center px-4 py-3 <?php echo $current_page === 'out_of_stock' ? 'bg-blue-50 text-blue-700 rounded-lg border-r-2 border-blue-500' : 'text-gray-700 rounded-lg hover:bg-gray-100 transition-colors'; ?>">
+                    <i data-feather="x-circle" class="ml-2 w-5 h-5"></i>
+                    <span>تمام شده</span>
+                </a>
+            </li>
+
+
+
         </ul>
     </nav>
     <div class="p-4 border-t border-gray-200">

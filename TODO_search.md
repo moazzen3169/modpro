@@ -1,0 +1,5 @@
+- [ ] Add search form above products list with fields for product name, category, color, size
+- [ ] Modify product query to include JOIN with Product_Variants for search across variants
+- [ ] Add WHERE conditions based on GET search parameters
+- [ ] Add clear search functionality
+- [ ] Test search functionality with various combinations

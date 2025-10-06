@@ -1,3 +1,7 @@
-# TODO for Sorting Purchase Items Table
-
-- [x] Change ORDER BY in purchases.php query to sort by MAX(pr.created_at) DESC for most recent registrations on top
+- [x] Update product query to show all products (including those without stock)
+- [x] Update variant query to show all variants (not just with stock > 0)
+- [x] Change HTML structure to expandable table rows for products
+- [x] Add button to toggle show/hide variants for each product
+- [x] Display variants in sub-rows or sub-table when expanded
+- [x] Add JavaScript for toggle functionality
+- [x] Test the new expandable table layout
