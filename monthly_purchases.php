@@ -123,60 +123,41 @@ if (!empty($return_totals_map)) {
     }
 }
 
-// Allocate returns proportionally to products based on their contribution in the original purchase
-if (!empty($return_totals_map)) {
-    $returns_allocation_query = "
-        SELECT
-            pr.purchase_return_id,
-            p.product_id,
-            p.model_name,
-            SUM(pi.quantity) AS product_purchase_quantity,
-            SUM(pi.quantity * pi.buy_price) AS product_purchase_total
-        FROM Purchase_Returns pr
-        JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
-        JOIN Product_Variants pv ON pi.variant_id = pv.variant_id
-        JOIN Products p ON pv.product_id = p.product_id
-        WHERE pr.return_date BETWEEN '$start_date' AND '$end_date'
-        GROUP BY pr.purchase_return_id, p.product_id
-    ";
+// Get return quantities per product from purchase_return_items
+$returns_per_product_query = "
+    SELECT
+        p.product_id,
+        p.model_name,
+        SUM(prit.quantity) AS return_quantity,
+        SUM(prit.quantity * prit.return_price) AS return_amount
+    FROM Purchase_Returns pr
+    JOIN Purchase_Return_Items prit ON pr.purchase_return_id = prit.purchase_return_id
+    JOIN Product_Variants pv ON prit.variant_id = pv.variant_id
+    JOIN Products p ON pv.product_id = p.product_id
+    WHERE pr.return_date BETWEEN '$start_date' AND '$end_date'
+    GROUP BY p.product_id, p.model_name
+";
 
-    if ($returns_allocation_result = $conn->query($returns_allocation_query)) {
-        while ($allocation = $returns_allocation_result->fetch_assoc()) {
-            $return_id = (int) $allocation['purchase_return_id'];
-            $product_id = (int) $allocation['product_id'];
-            $purchase_total = $return_purchase_totals[$return_id] ?? 0.0;
-            $return_total_amount = $return_totals_map[$return_id]['total_amount'] ?? 0.0;
-            $product_purchase_total = (float) $allocation['product_purchase_total'];
+$returns_per_product_result = $conn->query($returns_per_product_query);
 
-            if ($purchase_total <= 0 || $return_total_amount <= 0 || $product_purchase_total <= 0) {
-                continue;
-            }
-
-            $allocation_ratio = $product_purchase_total / $purchase_total;
-            $allocated_amount = $allocation_ratio * $return_total_amount;
-
-            $product_purchase_quantity = (float) $allocation['product_purchase_quantity'];
-            $average_price = $product_purchase_quantity > 0 ? $product_purchase_total / $product_purchase_quantity : 0.0;
-            $allocated_quantity = $average_price > 0 ? $allocated_amount / $average_price : 0.0;
-
-            if (!isset($monthly_purchases_data[$product_id])) {
-                $monthly_purchases_data[$product_id] = [
-                    'product_id' => $product_id,
-                    'model_name' => $allocation['model_name'],
-                    'total_quantity' => 0.0,
-                    'avg_buy_price' => 0.0,
-                    'total_amount' => 0.0,
-                    'return_quantity' => 0.0,
-                    'return_amount' => 0.0,
-                    'net_quantity' => 0.0,
-                    'net_amount' => 0.0,
-                ];
-            }
-
-            $monthly_purchases_data[$product_id]['return_quantity'] += $allocated_quantity;
-            $monthly_purchases_data[$product_id]['return_amount'] += $allocated_amount;
-        }
+$returns_per_product = [];
+if ($returns_per_product_result && $returns_per_product_result->num_rows > 0) {
+    while ($return = $returns_per_product_result->fetch_assoc()) {
+        $product_id = (int) $return['product_id'];
+        $returns_per_product[$product_id] = [
+            'return_quantity' => (float) $return['return_quantity'],
+            'return_amount' => (float) $return['return_amount'],
+        ];
     }
+}
+
+// Allocate returns to products
+foreach ($monthly_purchases_data as $product_id => $data) {
+    $return_quantity = $returns_per_product[$product_id]['return_quantity'] ?? 0.0;
+    $return_amount = $returns_per_product[$product_id]['return_amount'] ?? 0.0;
+
+    $monthly_purchases_data[$product_id]['return_quantity'] = $return_quantity;
+    $monthly_purchases_data[$product_id]['return_amount'] = $return_amount;
 }
 
 // Update net values for each product after allocating returns

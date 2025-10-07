@@ -9,9 +9,7 @@ function handle_create_return(mysqli $conn): void
         $conn->begin_transaction();
         $transactionStarted = true;
 
-        $customer_id = validate_int($_POST['customer_id'] ?? 0, 0);
         $return_date = validate_date((string)($_POST['return_date'] ?? ''));
-        $reason = trim((string)($_POST['reason'] ?? ''));
 
         $raw_items = $_POST['items'] ?? [];
         if (!is_array($raw_items) || $raw_items === []) {
@@ -22,40 +20,41 @@ function handle_create_return(mysqli $conn): void
         foreach ($raw_items as $item) {
             $variant_id = validate_int($item['variant_id'] ?? null, 1);
             $quantity = validate_int($item['quantity'] ?? null, 1);
-            $items[] = ['variant_id' => $variant_id, 'quantity' => $quantity];
+            $return_price = (float) ($item['return_price'] ?? 0);
+            $items[] = ['variant_id' => $variant_id, 'quantity' => $quantity, 'return_price' => $return_price];
         }
 
-        $insertReturnStmt = $conn->prepare('INSERT INTO Returns (customer_id, return_date, reason) VALUES (?, ?, ?)');
-        $insertReturnStmt->bind_param('iss', $customer_id, $return_date, $reason);
+        $supplier_id = validate_int($_POST['supplier_id'] ?: 1, 1);
+        $note = trim((string)($_POST['note'] ?? ''));
+
+        $insertReturnStmt = $conn->prepare('INSERT INTO purchase_returns (supplier_id, return_date, total_amount, note) VALUES (?, ?, 0, ?)');
+        $total_amount = array_sum(array_map(fn($item) => $item['quantity'] * $item['return_price'], $items));
+        $insertReturnStmt->bind_param('isds', $supplier_id, $return_date, $total_amount, $note);
         $insertReturnStmt->execute();
         $return_id = (int) $conn->insert_id;
 
-        $variantStmt = $conn->prepare('SELECT price FROM Product_Variants WHERE variant_id = ? FOR UPDATE');
-        $insertItemStmt = $conn->prepare('INSERT INTO Return_Items (return_id, variant_id, quantity, return_price) VALUES (?, ?, ?, ?)');
-        $updateStockStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock - ? WHERE variant_id = ?');
+        $insertItemStmt = $conn->prepare('INSERT INTO purchase_return_items (purchase_return_id, variant_id, quantity, return_price) VALUES (?, ?, ?, ?)');
+        $updateStockStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?');
 
         foreach ($items as $item) {
             $variant_id = $item['variant_id'];
             $quantity = $item['quantity'];
+            $return_price = $item['return_price'];
 
-            $variantStmt->bind_param('i', $variant_id);
-            $variantStmt->execute();
-            $variant = $variantStmt->get_result()->fetch_assoc();
-            if (!$variant) {
-                throw new RuntimeException('تنوع انتخاب‌شده وجود ندارد.');
-            }
-
-            $price = (float) $variant['price'];
-
-            $insertItemStmt->bind_param('iiid', $return_id, $variant_id, $quantity, $price);
+            $insertItemStmt->bind_param('iiid', $return_id, $variant_id, $quantity, $return_price);
             $insertItemStmt->execute();
 
             $updateStockStmt->bind_param('ii', $quantity, $variant_id);
             $updateStockStmt->execute();
         }
 
+        // Update total_amount
+        $updateTotalStmt = $conn->prepare('UPDATE purchase_returns SET total_amount = ? WHERE purchase_return_id = ?');
+        $updateTotalStmt->bind_param('di', $total_amount, $return_id);
+        $updateTotalStmt->execute();
+
         $conn->commit();
-        redirect_with_message('returns.php', 'success', 'مرجوعی جدید با موفقیت ثبت شد و موجودی به‌روزرسانی گردید.');
+        redirect_with_message('returns.php', 'success', 'مرجوعی خرید جدید با موفقیت ثبت شد و موجودی به‌روزرسانی گردید.');
     } catch (Throwable $e) {
         if ($transactionStarted) {
             $conn->rollback();
@@ -75,7 +74,7 @@ function handle_delete_return(mysqli $conn): void
 
         $return_id = validate_int($_GET['delete_return'] ?? null, 1);
 
-        $returnStmt = $conn->prepare('SELECT return_id FROM Returns WHERE return_id = ? FOR UPDATE');
+        $returnStmt = $conn->prepare('SELECT purchase_return_id FROM purchase_returns WHERE purchase_return_id = ? FOR UPDATE');
         $returnStmt->bind_param('i', $return_id);
         $returnStmt->execute();
         $returnExists = $returnStmt->get_result()->fetch_assoc();
@@ -83,12 +82,12 @@ function handle_delete_return(mysqli $conn): void
             throw new RuntimeException('مرجوعی موردنظر یافت نشد.');
         }
 
-        $itemsStmt = $conn->prepare('SELECT variant_id, quantity FROM Return_Items WHERE return_id = ? FOR UPDATE');
+        $itemsStmt = $conn->prepare('SELECT variant_id, quantity FROM purchase_return_items WHERE purchase_return_id = ? FOR UPDATE');
         $itemsStmt->bind_param('i', $return_id);
         $itemsStmt->execute();
         $itemsResult = $itemsStmt->get_result();
 
-        $decreaseStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?');
+        $decreaseStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock - ? WHERE variant_id = ?');
         while ($item = $itemsResult->fetch_assoc()) {
             $quantity = (int) $item['quantity'];
             if ($quantity <= 0) {
@@ -100,11 +99,11 @@ function handle_delete_return(mysqli $conn): void
             $decreaseStmt->execute();
         }
 
-        $deleteItemsStmt = $conn->prepare('DELETE FROM Return_Items WHERE return_id = ?');
+        $deleteItemsStmt = $conn->prepare('DELETE FROM purchase_return_items WHERE purchase_return_id = ?');
         $deleteItemsStmt->bind_param('i', $return_id);
         $deleteItemsStmt->execute();
 
-        $deleteReturnStmt = $conn->prepare('DELETE FROM Returns WHERE return_id = ?');
+        $deleteReturnStmt = $conn->prepare('DELETE FROM purchase_returns WHERE purchase_return_id = ?');
         $deleteReturnStmt->bind_param('i', $return_id);
         $deleteReturnStmt->execute();
 
@@ -183,9 +182,9 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
                         <thead class="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-300">
                             <tr>
                                 <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">شماره مرجوعی</th>
-                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">مشتری</th>
+                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">تامین‌کننده</th>
                                 <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">تاریخ</th>
-                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">دلیل</th>
+                                <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">یادداشت</th>
                                 <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">تعداد آیتم</th>
                                 <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">مجموع</th>
                                 <th class="px-6 py-4 text-right text-xs font-bold text-blue-700 uppercase tracking-wider">عملیات</th>
@@ -193,22 +192,22 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-100">
                             <?php
-$returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, COUNT(ri.return_item_id) as item_count, SUM(ri.quantity * ri.return_price) as total_amount FROM Returns r LEFT JOIN Return_Items ri ON r.return_id = ri.return_id GROUP BY r.return_id ORDER BY r.return_date DESC, r.return_id DESC");
+$returns = $conn->query("SELECT r.purchase_return_id, r.return_date, r.total_amount, r.note, s.name as supplier_name, COUNT(ri.purchase_return_item_id) as item_count FROM purchase_returns r LEFT JOIN purchase_return_items ri ON r.purchase_return_id = ri.purchase_return_id LEFT JOIN suppliers s ON r.supplier_id = s.supplier_id GROUP BY r.purchase_return_id ORDER BY r.return_date DESC, r.purchase_return_id DESC");
 
                             if ($returns->num_rows > 0) {
                                 while($return = $returns->fetch_assoc()){
-                                    $return_id = (int) $return['return_id'];
-                                    $customer_name = htmlspecialchars($return['customer_name'] ?: 'مشتری حضوری', ENT_QUOTES, 'UTF-8');
+                                    $return_id = (int) $return['purchase_return_id'];
+                                    $supplier_name = htmlspecialchars($return['supplier_name'] ?: 'تامین‌کننده نامشخص', ENT_QUOTES, 'UTF-8');
                                     $return_date = htmlspecialchars(convert_gregorian_to_jalali_for_display((string) $return['return_date']), ENT_QUOTES, 'UTF-8');
-                                    $reason = htmlspecialchars((string) ($return['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
+                                    $note = htmlspecialchars((string) ($return['note'] ?? ''), ENT_QUOTES, 'UTF-8');
                                     $item_count = (int) $return['item_count'];
                                     $total_amount = number_format((float) ($return['total_amount'] ?? 0), 0);
 
                                     echo "<tr class='hover:bg-gray-50'>
                                             <td class='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>#مرجوعی-{$return_id}</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$customer_name}</td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$supplier_name}</td>
                                             <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$return_date}</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$reason}</td>
+                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$note}</td>
                                             <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$item_count}</td>
                                             <td class='px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900'>{$total_amount} تومان</td>
                                             <td class='px-6 py-4 whitespace-nowrap text-sm font-medium'>
@@ -319,8 +318,21 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
                                         <div class="bg-gray-50 p-4 rounded-lg">
                                             <div class="space-y-4">
                                                 <div>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-2">نوع مرجوعی</label>
+                                                    <div class="flex space-x-4 space-x-reverse">
+                                                        <label class="flex items-center">
+                                                            <input type="radio" name="return_type" value="sales" checked class="ml-2" onchange="toggleReturnType()">
+                                                            <span>مرجوعی فروش</span>
+                                                        </label>
+                                                        <label class="flex items-center">
+                                                            <input type="radio" name="return_type" value="purchase" class="ml-2" onchange="toggleReturnType()">
+                                                            <span>مرجوعی خرید</span>
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                                <div id="customerField">
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">مشتری</label>
-                                                    <select name="customer_id" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                                    <select name="customer_id" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                                                         <option value="0">مشتری حضوری</option>
                                                         <?php
                                                         $customers = $conn->query("SELECT * FROM Customers ORDER BY name");
@@ -330,13 +342,29 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
                                                         ?>
                                                     </select>
                                                 </div>
+                                                <div id="supplierField" class="hidden">
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">تامین‌کننده</label>
+                                                    <select name="supplier_id" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                                        <option value="">انتخاب تامین‌کننده...</option>
+                                                        <?php
+                                                        $suppliers = $conn->query("SELECT * FROM suppliers ORDER BY name");
+                                                        while($supplier = $suppliers->fetch_assoc()){
+                                                            echo "<option value='{$supplier['supplier_id']}'>{$supplier['name']}</option>";
+                                                        }
+                                                        ?>
+                                                    </select>
+                                                </div>
                                                 <div>
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">تاریخ مرجوعی</label>
                                                     <input type="text" name="return_date" value="<?php echo htmlspecialchars(get_current_jalali_date_string(), ENT_QUOTES, 'UTF-8'); ?>" placeholder="مثال: 1404/07/07" inputmode="numeric" pattern="[0-9]{4}/[0-9]{2}/[0-9]{2}" dir="ltr" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                                                 </div>
-                                                <div>
+                                                <div id="reasonField">
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">دلیل مرجوعی</label>
                                                     <textarea name="reason" rows="3" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="دلیل مرجوعی را وارد کنید..."></textarea>
+                                                </div>
+                                                <div id="noteField" class="hidden">
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">یادداشت</label>
+                                                    <textarea name="note" rows="3" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="یادداشت مرجوعی را وارد کنید..."></textarea>
                                                 </div>
 
                                                 <div class="pt-4 border-t border-gray-200">
@@ -716,6 +744,26 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
                     <input type="hidden" name="items[${index}][return_price]" value="${item.price}">
                 `;
             });
+        }
+
+        function toggleReturnType() {
+            const returnType = document.querySelector('input[name="return_type"]:checked').value;
+            const customerField = document.getElementById('customerField');
+            const supplierField = document.getElementById('supplierField');
+            const reasonField = document.getElementById('reasonField');
+            const noteField = document.getElementById('noteField');
+
+            if (returnType === 'sales') {
+                customerField.classList.remove('hidden');
+                supplierField.classList.add('hidden');
+                reasonField.classList.remove('hidden');
+                noteField.classList.add('hidden');
+            } else if (returnType === 'purchase') {
+                customerField.classList.add('hidden');
+                supplierField.classList.remove('hidden');
+                reasonField.classList.add('hidden');
+                noteField.classList.remove('hidden');
+            }
         }
 
         function validateReturnForm() {
