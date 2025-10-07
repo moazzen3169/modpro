@@ -47,7 +47,8 @@ function render_sales_table(mysqli_result|false $salesResult): string
                     $sale_id = (int) $sale['sale_id'];
                     $customer_id = isset($sale['customer_id']) ? (int) $sale['customer_id'] : 0;
                     $customer_name = htmlspecialchars($sale['customer_name'] ?: 'مشتری حضوری', ENT_QUOTES, 'UTF-8');
-                    $sale_date = htmlspecialchars((string) $sale['sale_date'], ENT_QUOTES, 'UTF-8');
+                    $sale_date_value = convert_gregorian_to_jalali_for_display((string) $sale['sale_date']);
+                    $sale_date = htmlspecialchars($sale_date_value, ENT_QUOTES, 'UTF-8');
                     $status = (string) ($sale['status'] ?? 'pending');
                     $payment_method = (string) ($sale['payment_method'] ?? 'cash');
                     $item_count = (int) ($sale['item_count'] ?? 0);
@@ -67,7 +68,7 @@ function render_sales_table(mysqli_result|false $salesResult): string
                         $payment_text = 'کارت اعتباری';
                     }
 
-                    $sale_date_json = json_encode((string) $sale['sale_date'], JSON_UNESCAPED_UNICODE);
+                    $sale_date_json = json_encode($sale_date_value, JSON_UNESCAPED_UNICODE);
                     $payment_method_json = json_encode($payment_method, JSON_UNESCAPED_UNICODE);
                     $status_json = json_encode($status, JSON_UNESCAPED_UNICODE);
 

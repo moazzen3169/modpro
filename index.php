@@ -20,10 +20,12 @@ $low_stock = $conn->query("SELECT p.model_name, pv.color, pv.size, pv.stock FROM
 
 // Get sales data for last 30 days for chart
 $sales_chart_data = [];
+$sales_chart_labels = [];
 for ($i = 29; $i >= 0; $i--) {
     $date = date('Y-m-d', strtotime("-$i days"));
     $amount = $conn->query("SELECT SUM(si.quantity * si.sell_price) as total FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE DATE(s.sale_date) = '$date'")->fetch_assoc()['total'] ?: 0;
     $sales_chart_data[] = $amount;
+    $sales_chart_labels[] = convert_gregorian_to_jalali_for_display($date);
 }
 
 // Get top products for bar chart
@@ -128,7 +130,7 @@ while ($row = $top_products_query->fetch_assoc()) {
                 <h2 class="text-xl font-semibold text-gray-800">داشبورد</h2>
                 <div class="flex items-center space-x-4">
                     <div class="text-sm text-gray-500">
-                        <?php echo date('l j F Y'); ?>
+                        <?php echo htmlspecialchars(get_current_jalali_date_string(), ENT_QUOTES, 'UTF-8'); ?>
                     </div>
                 </div>
             </header>
@@ -321,13 +323,7 @@ while ($row = $top_products_query->fetch_assoc()) {
         const salesChart = new Chart(salesCtx, {
             type: 'line',
             data: {
-                labels: [
-                    <?php
-                    for ($i = 29; $i >= 0; $i--) {
-                        echo "'" . date('m/d', strtotime("-$i days")) . "',";
-                    }
-                    ?>
-                ],
+                labels: [<?php echo "'" . implode("','", $sales_chart_labels) . "'"; ?>],
                 datasets: [{
                     label: 'فروش روزانه (تومان)',
                     data: [<?php echo implode(',', $sales_chart_data); ?>],

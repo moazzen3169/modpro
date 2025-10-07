@@ -678,7 +678,7 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                         <div class="flex flex-col sm:flex-row items-start sm:items-center space-y-3 sm:space-y-0 sm:space-x-4 sm:space-x-reverse">
                             <div class="relative">
                                 <i data-feather="calendar" class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
-                                <input type="date" id="dateFilter" class="pr-10 pl-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <input type="text" id="dateFilter" placeholder="مثال: 1404/07/07" inputmode="numeric" pattern="[0-9]{4}/[0-9]{2}/[0-9]{2}" dir="ltr" class="pr-10 pl-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
                             <div class="relative">
                                 <i data-feather="search" class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
@@ -804,7 +804,7 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                                                 </div>
                                                 <div>
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">تاریخ فروش</label>
-                                                    <input type="date" name="sale_date" value="<?php echo date('Y-m-d'); ?>" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                                    <input type="text" name="sale_date" value="<?php echo htmlspecialchars(get_current_jalali_date_string(), ENT_QUOTES, 'UTF-8'); ?>" placeholder="مثال: 1404/07/07" inputmode="numeric" pattern="[0-9]{4}/[0-9]{2}/[0-9]{2}" dir="ltr" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                                                 </div>
 
                                                 <div class="pt-4 border-t border-gray-200">
@@ -864,7 +864,7 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                                     </div>
                                     <div>
                                         <label class="block text-sm font-medium text-gray-700 mb-1">تاریخ فروش</label>
-                                        <input type="date" name="sale_date" id="edit_sale_date" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                        <input type="text" name="sale_date" id="edit_sale_date" placeholder="مثال: 1404/07/07" inputmode="numeric" pattern="[0-9]{4}/[0-9]{2}/[0-9]{2}" dir="ltr" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                                     </div>
                                     <div>
                                         <label class="block text-sm font-medium text-gray-700 mb-1">روش پرداخت</label>

@@ -320,7 +320,7 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
                                 while($return = $returns->fetch_assoc()){
                                     $return_id = (int) $return['return_id'];
                                     $customer_name = htmlspecialchars($return['customer_name'] ?: 'مشتری حضوری', ENT_QUOTES, 'UTF-8');
-                                    $return_date = htmlspecialchars((string) $return['return_date'], ENT_QUOTES, 'UTF-8');
+                                    $return_date = htmlspecialchars(convert_gregorian_to_jalali_for_display((string) $return['return_date']), ENT_QUOTES, 'UTF-8');
                                     $reason = htmlspecialchars((string) ($return['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
                                     $item_count = (int) $return['item_count'];
                                     $total_amount = number_format((float) ($return['total_amount'] ?? 0), 0);
@@ -453,7 +453,7 @@ $returns = $conn->query("SELECT r.*, 'مشتری حضوری' as customer_name, C
                                                 </div>
                                                 <div>
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">تاریخ مرجوعی</label>
-                                                    <input type="date" name="return_date" value="<?php echo date('Y-m-d'); ?>" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                                    <input type="text" name="return_date" value="<?php echo htmlspecialchars(get_current_jalali_date_string(), ENT_QUOTES, 'UTF-8'); ?>" placeholder="مثال: 1404/07/07" inputmode="numeric" pattern="[0-9]{4}/[0-9]{2}/[0-9]{2}" dir="ltr" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                                                 </div>
                                                 <div>
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">دلیل مرجوعی</label>

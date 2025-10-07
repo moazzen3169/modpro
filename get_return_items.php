@@ -30,7 +30,7 @@ $itemsStmt->execute();
 $itemsResult = $itemsStmt->get_result();
 
 $customer_name = htmlspecialchars($return['customer_name'] ?: 'مشتری حضوری', ENT_QUOTES, 'UTF-8');
-$return_date = htmlspecialchars((string) $return['return_date'], ENT_QUOTES, 'UTF-8');
+$return_date = htmlspecialchars(convert_gregorian_to_jalali_for_display((string) $return['return_date']), ENT_QUOTES, 'UTF-8');
 $reason = htmlspecialchars((string) ($return['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
 
 echo '<div class="space-y-6">';

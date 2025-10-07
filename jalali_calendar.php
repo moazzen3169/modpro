@@ -1,7 +1,8 @@
 <?php
 /**
  * Jalali (Persian) Calendar Functions
- * Provides conversion between Gregorian and Jalali dates
+ * Provides conversion between Gregorian and Jalali dates and helpers for
+ * consistently working with formatted date strings across the application.
  */
 
 /**
@@ -78,6 +79,10 @@ function gregorian_to_jalali($gy, $gm, $gd) {
  * @return string Formatted date
  */
 function format_jalali_date($jy, $jm, $jd, $format = 'Y/m/d') {
+    $jy = (int) $jy;
+    $jm = (int) $jm;
+    $jd = (int) $jd;
+
     $months = [
         1 => 'فروردین',
         2 => 'اردیبهشت',
@@ -93,15 +98,16 @@ function format_jalali_date($jy, $jm, $jd, $format = 'Y/m/d') {
         12 => 'اسفند'
     ];
 
-    $formatted = $format;
-    $formatted = str_replace('Y', $jy, $formatted);
-    $formatted = str_replace('y', substr($jy, -2), $formatted);
-    $formatted = str_replace('m', str_pad($jm, 2, '0', STR_PAD_LEFT), $formatted);
-    $formatted = str_replace('d', str_pad($jd, 2, '0', STR_PAD_LEFT), $formatted);
-    $formatted = str_replace('M', $months[$jm], $formatted);
-    $formatted = str_replace('F', $months[$jm], $formatted); // F is same as M for full name
+    $replacements = [
+        'Y' => sprintf('%04d', $jy),
+        'y' => substr(sprintf('%04d', $jy), -2),
+        'm' => sprintf('%02d', $jm),
+        'd' => sprintf('%02d', $jd),
+        'M' => $months[$jm] ?? '',
+        'F' => $months[$jm] ?? '',
+    ];
 
-    return $formatted;
+    return strtr($format, $replacements);
 }
 
 /**
@@ -115,6 +121,16 @@ function get_current_jalali_date() {
 }
 
 /**
+ * Get current Jalali date as formatted string (Y/m/d)
+ */
+function get_current_jalali_date_string(): string
+{
+    [$jy, $jm, $jd] = get_current_jalali_date();
+
+    return sprintf('%04d/%02d/%02d', $jy, $jm, $jd);
+}
+
+/**
  * Check if a Jalali date is valid
  *
  * @param int $jy Year
@@ -123,9 +139,32 @@ function get_current_jalali_date() {
  * @return bool
  */
 function is_valid_jalali_date($jy, $jm, $jd) {
-    if ($jm < 1 || $jm > 12 || $jd < 1) return false;
-    $days_in_month = [31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, ($jy % 33 % 4 - 1 == ($jy % 33 % 4 > 1 ? 1 : 0) ? 30 : 29)];
+    $jy = (int) $jy;
+    $jm = (int) $jm;
+    $jd = (int) $jd;
+
+    if ($jm < 1 || $jm > 12 || $jd < 1) {
+        return false;
+    }
+
+    $days_in_month = [31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, is_jalali_leap_year($jy) ? 30 : 29];
+
     return $jd <= $days_in_month[$jm - 1];
+}
+
+/**
+ * Determine if provided Jalali year is leap year.
+ */
+function is_jalali_leap_year(int $jy): bool
+{
+    $jy = (int) $jy;
+    $adjustedYear = $jy > 0 ? $jy : $jy - 1;
+    $cycle = ($adjustedYear - 474) % 2820;
+    if ($cycle < 0) {
+        $cycle += 2820;
+    }
+
+    return ((($cycle + 474 + 38) * 682) % 2816) < 682;
 }
 
 /**
@@ -173,7 +212,92 @@ function timestamp_to_jalali($timestamp) {
  * @return int Unix timestamp
  */
 function jalali_to_timestamp($jy, $jm, $jd) {
-    list($gy, $gm, $gd) = jalali_to_gregorian($jy, $jm, $jd);
+    [$gy, $gm, $gd] = jalali_to_gregorian($jy, $jm, $jd);
     return mktime(0, 0, 0, $gm, $gd, $gy);
+}
+
+/**
+ * Parse a Jalali date string (format Y/m/d) and return its components.
+ *
+ * @throws InvalidArgumentException
+ */
+function parse_jalali_date_string(string $value): array
+{
+    $value = trim($value);
+    if ($value === '') {
+        throw new InvalidArgumentException('تاریخ نمی‌تواند خالی باشد.');
+    }
+
+    if (!preg_match('/^(\d{4})\/(\d{2})\/(\d{2})$/u', $value, $matches)) {
+        throw new InvalidArgumentException('قالب تاریخ باید به صورت YYYY/MM/DD باشد.');
+    }
+
+    $jy = (int) $matches[1];
+    $jm = (int) $matches[2];
+    $jd = (int) $matches[3];
+
+    if (!is_valid_jalali_date($jy, $jm, $jd)) {
+        throw new InvalidArgumentException('تاریخ نامعتبر است.');
+    }
+
+    return [$jy, $jm, $jd];
+}
+
+/**
+ * Convert a Jalali date string (Y/m/d) to Gregorian string (Y-m-d)
+ */
+function jalali_to_gregorian_string(string $jalaliDate): string
+{
+    [$jy, $jm, $jd] = parse_jalali_date_string($jalaliDate);
+    [$gy, $gm, $gd] = jalali_to_gregorian($jy, $jm, $jd);
+
+    return sprintf('%04d-%02d-%02d', $gy, $gm, $gd);
+}
+
+/**
+ * Convert a Gregorian date string (Y-m-d) to Jalali string (Y/m/d)
+ */
+function gregorian_to_jalali_string(string $gregorianDate): string
+{
+    $gregorianDate = trim($gregorianDate);
+
+    $date = DateTime::createFromFormat('Y-m-d', $gregorianDate);
+    if (!$date || $date->format('Y-m-d') !== $gregorianDate) {
+        throw new InvalidArgumentException('تاریخ نامعتبر است.');
+    }
+
+    [$jy, $jm, $jd] = gregorian_to_jalali((int) $date->format('Y'), (int) $date->format('m'), (int) $date->format('d'));
+
+    return sprintf('%04d/%02d/%02d', $jy, $jm, $jd);
+}
+
+/**
+ * Convert a Gregorian date string (Y-m-d or Y-m-d H:i:s) to a Jalali
+ * display string. Invalid inputs are returned unchanged.
+ */
+function convert_gregorian_to_jalali_for_display(?string $value): string
+{
+    $value = trim((string) $value);
+    if ($value === '') {
+        return '';
+    }
+
+    $datePart = substr($value, 0, 10);
+
+    try {
+        return gregorian_to_jalali_string($datePart);
+    } catch (Throwable) {
+        return $value;
+    }
+}
+
+/**
+ * Convert a Jalali formatted string to Unix timestamp (start of day).
+ */
+function jalali_string_to_timestamp(string $jalaliDate): int
+{
+    [$jy, $jm, $jd] = parse_jalali_date_string($jalaliDate);
+
+    return jalali_to_timestamp($jy, $jm, $jd);
 }
 ?>
