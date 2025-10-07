@@ -11,20 +11,6 @@ function sanitize_text_field(string $value, string $empty_message): string
     return $trimmed;
 }
 
-function validate_price(mixed $value): float
-{
-    if (!is_numeric($value)) {
-        throw new InvalidArgumentException('قیمت وارد شده نامعتبر است.');
-    }
-
-    $price = (float) $value;
-    if ($price <= 0) {
-        throw new InvalidArgumentException('قیمت باید بزرگ‌تر از صفر باشد.');
-    }
-
-    return $price;
-}
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['create_product'])) {
         try {
@@ -348,7 +334,7 @@ $total_products = $conn->query("SELECT COUNT(*) as count FROM Products")->fetch_
 $total_variants = $conn->query("SELECT COUNT(*) as count FROM Product_Variants")->fetch_assoc()['count'];
 $total_stock = $conn->query("SELECT SUM(stock) as total FROM Product_Variants")->fetch_assoc()['total'] ?: 0;
 $low_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants WHERE stock <= 5")->fetch_assoc()['count'];
-$zero_stock_count = $conn->query("SELECT COUNT(DISTINCT p.product_id) as count FROM Products p LEFT JOIN Product_Variants pv ON p.product_id = pv.product_id WHERE pv.stock = 0 OR pv.variant_id IS NULL")->fetch_assoc()['count'];
+$zero_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants WHERE stock = 0")->fetch_assoc()['count'];
 ?>
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
