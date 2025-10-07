@@ -463,7 +463,7 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
                                             <div class="space-y-4">
                                                 <div>
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">تامین‌کننده</label>
-                                                    <select name="supplier_id" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                                    <select id="returnSupplierSelect" name="supplier_id" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                                                         <option value="">انتخاب تامین‌کننده...</option>
                                                         <?php foreach ($suppliers as $supplier): ?>
                                                             <option value="<?php echo (int) $supplier['supplier_id']; ?>" <?php echo $selectedSupplierId === (int) $supplier['supplier_id'] ? 'selected' : ''; ?>>
@@ -865,7 +865,7 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
                 alert('لطفا حداقل یک محصول به مرجوعی اضافه کنید.');
                 return false;
             }
-            const supplierSelect = document.querySelector('select[name="supplier_id"]');
+            const supplierSelect = document.querySelector('#newReturnForm select[name="supplier_id"]');
             if (!supplierSelect || !supplierSelect.value) {
                 alert('لطفا تامین‌کننده را انتخاب کنید.');
                 return false;
