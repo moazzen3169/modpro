@@ -426,7 +426,7 @@ ORDER BY MAX(pr.created_at) DESC
         function addPurchaseItem() {
             const itemsContainer = document.getElementById('purchaseItems');
             const itemDiv = document.createElement('div');
-            itemDiv.className = 'purchase-item bg-white p-6 rounded-xl border-2 border-gray-200 hover:border-blue-300 transition-all duration-200 shadow-sm';
+            itemDiv.className = 'purchase-item bg-white p-6 rounded-xl border border-gray-200 hover:border-blue-300 transition-all duration-200 shadow-sm';
             itemDiv.innerHTML = `
                 <div class="flex justify-between items-center mb-4 pb-3 border-b border-gray-100">
                     <h5 class="font-semibold text-gray-700 flex items-center">
