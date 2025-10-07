@@ -597,7 +597,7 @@ ORDER BY MAX(pr.created_at) DESC
                 <td colspan="3" class="border border-gray-300 px-3 py-3">
                     <div class="flex flex-wrap gap-2 items-center">
                         <span class="text-sm font-medium text-gray-700">انتخاب سایز:</span>
-                        ${['S', 'M', 'L', 'XL', 'XXL', 'XXXL'].map(size => `
+                        ${['36', '38', '40', '42', '44', '46', '48', '50', '52', '54', '56'].map(size => `
                             <button type="button" 
                                     onclick="selectSize('${size}', ${itemIndex}, ${colorIndex})"
                                     class="size-selector-btn px-3 py-1 bg-white border border-gray-300 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-all duration-200 text-sm">

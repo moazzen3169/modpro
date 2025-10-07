@@ -568,12 +568,16 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                                                     </div>
                                                 </div>
 
-                                                <!-- Quantity and Add Button -->
+                                                <!-- Quantity, Price and Add Button -->
                                                 <div id="quantitySelection" class="hidden">
-                                                    <div class="grid grid-cols-2 gap-4">
+                                                    <div class="grid grid-cols-1 gap-4">
                                                         <div>
                                                             <label class="block text-sm font-medium text-gray-700 mb-1">تعداد</label>
                                                             <input type="number" id="quantityInput" min="1" value="1" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                                        </div>
+                                                        <div>
+                                                            <label class="block text-sm font-medium text-gray-700 mb-1">قیمت فروش (تومان)</label>
+                                                            <input type="number" id="sellPriceInput" step="0.01" min="0.01" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                                                         </div>
                                                         <div class="flex items-end">
                                                             <button type="button" onclick="addItemToSale()" class="w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 transition-colors">

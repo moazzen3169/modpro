@@ -745,11 +745,17 @@ $zero_stock_count = $conn->query("SELECT COUNT(DISTINCT p.product_id) as count F
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-2">سایز</label>
                             <select name="size" id="edit_size" required class="w-full border border-gray-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
-                                <option value="S">S</option>
-                                <option value="M">M</option>
-                                <option value="L">L</option>
-                                <option value="XL">XL</option>
-                                <option value="XXL">XXL</option>
+                                <option value="36">36</option>
+                                <option value="38">38</option>
+                                <option value="40">40</option>
+                                <option value="42">42</option>
+                                <option value="44">44</option>
+                                <option value="46">46</option>
+                                <option value="48">48</option>
+                                <option value="50">50</option>
+                                <option value="52">52</option>
+                                <option value="54">54</option>
+                                <option value="56">56</option>
                             </select>
                         </div>
                         <div>
