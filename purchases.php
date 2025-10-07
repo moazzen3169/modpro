@@ -9,7 +9,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = $_POST['action'];
 
         if ($action === 'create_purchase') {
-            $supplierId = 1; // default supplier
+            $errors = [];
+
+            $supplierId = null;
+            try {
+                $supplierId = validate_int($_POST['supplier_id'] ?? null, 1);
+            } catch (Throwable $e) {
+                $errors[] = 'تامین‌کننده انتخاب‌شده معتبر نیست.';
+            }
+
+            if ($supplierId !== null) {
+                $supplierCheckStmt = $conn->prepare('SELECT supplier_id FROM Suppliers WHERE supplier_id = ?');
+                $supplierCheckStmt->bind_param('i', $supplierId);
+                $supplierCheckStmt->execute();
+                if (!$supplierCheckStmt->get_result()->fetch_row()) {
+                    $errors[] = 'تامین‌کننده انتخاب‌شده یافت نشد.';
+                }
+                $supplierCheckStmt->close();
+            }
+
             $purchaseDateInput = (string) ($_POST['purchase_date'] ?? '');
             try {
                 $purchaseDate = validate_date($purchaseDateInput);
@@ -20,8 +38,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $paymentMethod = 'cash';
             $status = 'completed';
             $items = $_POST['items'] ?? [];
-
-            $errors = [];
 
             if (empty($items) || !is_array($items)) {
                 $errors[] = 'حداقل یک آیتم اضافه کنید.';
@@ -145,20 +161,113 @@ $suppliersStmt = $conn->prepare('SELECT supplier_id, name FROM Suppliers ORDER B
 $suppliersStmt->execute();
 $suppliersResult = $suppliersStmt->get_result();
 $suppliers = [];
+$supplierMap = [];
 while ($row = $suppliersResult->fetch_assoc()) {
+    $row['supplier_id'] = (int) $row['supplier_id'];
     $suppliers[] = $row;
+    $supplierMap[$row['supplier_id']] = $row['name'];
 }
 $suppliersStmt->close();
 
-$allPurchaseItems = $conn->query("
-SELECT pr.purchase_date, p.model_name, pv.color, GROUP_CONCAT(DISTINCT pv.size ORDER BY pv.size SEPARATOR ', ') as sizes, SUM(pi.quantity) as total_quantity, AVG(pi.buy_price) as avg_buy_price, SUM(pi.quantity * pi.buy_price) as total_amount
-FROM Purchases pr
-JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
-JOIN Product_Variants pv ON pi.variant_id = pv.variant_id
-JOIN Products p ON pv.product_id = p.product_id
-GROUP BY pr.purchase_date, p.model_name, pv.color
-ORDER BY MAX(pr.created_at) DESC
-");
+$selectedSupplierId = null;
+if (isset($_GET['supplier_id'])) {
+    $supplierFilterValue = $_GET['supplier_id'];
+    if ($supplierFilterValue !== '' && $supplierFilterValue !== 'all') {
+        try {
+            $candidateId = validate_int($supplierFilterValue, 1);
+            if (isset($supplierMap[$candidateId])) {
+                $selectedSupplierId = $candidateId;
+            }
+        } catch (Throwable) {
+            // Ignore invalid filter and fallback to showing all suppliers
+        }
+    }
+}
+
+$selectedSupplierName = $selectedSupplierId !== null ? ($supplierMap[$selectedSupplierId] ?? '') : 'همه تامین‌کننده‌ها';
+
+$purchaseSummaryQuery = "
+    SELECT
+        COUNT(DISTINCT pr.purchase_id) AS purchase_count,
+        COALESCE(SUM(pi.quantity), 0) AS total_quantity,
+        COALESCE(SUM(pi.quantity * pi.buy_price), 0) AS total_amount
+    FROM Purchases pr
+    JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
+";
+
+$returnSummaryQuery = "
+    SELECT
+        COUNT(DISTINCT r.purchase_return_id) AS return_count,
+        COALESCE(SUM(ri.quantity), 0) AS total_quantity,
+        COALESCE(SUM(ri.quantity * ri.return_price), 0) AS total_amount
+    FROM Purchase_Returns r
+    JOIN Purchase_Return_Items ri ON r.purchase_return_id = ri.purchase_return_id
+";
+
+$purchaseSummaryStmt = $selectedSupplierId !== null
+    ? $conn->prepare($purchaseSummaryQuery . ' WHERE pr.supplier_id = ?')
+    : $conn->prepare($purchaseSummaryQuery);
+
+if ($selectedSupplierId !== null) {
+    $purchaseSummaryStmt->bind_param('i', $selectedSupplierId);
+}
+$purchaseSummaryStmt->execute();
+$purchaseSummary = $purchaseSummaryStmt->get_result()->fetch_assoc() ?: [
+    'purchase_count' => 0,
+    'total_quantity' => 0,
+    'total_amount' => 0,
+];
+$purchaseSummaryStmt->close();
+
+$returnSummaryStmt = $selectedSupplierId !== null
+    ? $conn->prepare($returnSummaryQuery . ' WHERE r.supplier_id = ?')
+    : $conn->prepare($returnSummaryQuery);
+
+if ($selectedSupplierId !== null) {
+    $returnSummaryStmt->bind_param('i', $selectedSupplierId);
+}
+$returnSummaryStmt->execute();
+$returnSummary = $returnSummaryStmt->get_result()->fetch_assoc() ?: [
+    'return_count' => 0,
+    'total_quantity' => 0,
+    'total_amount' => 0,
+];
+$returnSummaryStmt->close();
+
+$netPurchaseAmount = (float) $purchaseSummary['total_amount'] - (float) $returnSummary['total_amount'];
+
+$purchaseItemsQuery = "
+    SELECT
+        pr.purchase_date,
+        pr.supplier_id,
+        s.name AS supplier_name,
+        p.model_name,
+        pv.color,
+        GROUP_CONCAT(DISTINCT pv.size ORDER BY pv.size SEPARATOR ', ') AS sizes,
+        SUM(pi.quantity) AS total_quantity,
+        AVG(pi.buy_price) AS avg_buy_price,
+        SUM(pi.quantity * pi.buy_price) AS total_amount,
+        MAX(pr.created_at) AS latest_created_at
+    FROM Purchases pr
+    JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
+    JOIN Product_Variants pv ON pi.variant_id = pv.variant_id
+    JOIN Products p ON pv.product_id = p.product_id
+    JOIN Suppliers s ON pr.supplier_id = s.supplier_id
+";
+
+if ($selectedSupplierId !== null) {
+    $purchaseItemsQuery .= ' WHERE pr.supplier_id = ?';
+}
+
+$purchaseItemsQuery .= ' GROUP BY pr.purchase_date, pr.supplier_id, p.model_name, pv.color ORDER BY latest_created_at DESC';
+
+$purchaseItemsStmt = $conn->prepare($purchaseItemsQuery);
+if ($selectedSupplierId !== null) {
+    $purchaseItemsStmt->bind_param('i', $selectedSupplierId);
+}
+$purchaseItemsStmt->execute();
+$allPurchaseItems = $purchaseItemsStmt->get_result();
+$purchaseItemsStmt->close();
 
 ?>
 <!DOCTYPE html>
@@ -179,12 +288,55 @@ ORDER BY MAX(pr.created_at) DESC
         <!-- Main Content -->
         <div class="flex-1 overflow-auto p-6">
             <!-- Header -->
-            <div class="flex justify-between items-center mb-6">
-                <h2 class="text-2xl font-semibold">خریدها</h2>
-                <button onclick="openModal('purchaseModal')" class="flex items-center px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all duration-200 shadow-sm hover:shadow-md">
-                    <i data-feather="plus" class="ml-2"></i>
-                    خرید جدید
-                </button>
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+                <div>
+                    <h2 class="text-2xl font-semibold text-gray-800">خریدها</h2>
+                    <p class="text-sm text-gray-500 mt-1">نمایش جزئیات خریدهای <?php echo htmlspecialchars($selectedSupplierName, ENT_QUOTES, 'UTF-8'); ?></p>
+                </div>
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                    <form method="get" class="flex items-center bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
+                        <label for="supplierFilter" class="text-sm text-gray-600 ml-2">تامین‌کننده</label>
+                        <select id="supplierFilter" name="supplier_id" onchange="this.form.submit()" class="border-0 focus:ring-0 text-sm text-gray-700">
+                            <option value="" <?php echo $selectedSupplierId === null ? 'selected' : ''; ?>>همه تامین‌کننده‌ها</option>
+                            <?php foreach ($suppliers as $supplier): ?>
+                                <option value="<?php echo (int) $supplier['supplier_id']; ?>" <?php echo $selectedSupplierId === (int) $supplier['supplier_id'] ? 'selected' : ''; ?>>
+                                    <?php echo htmlspecialchars($supplier['name'], ENT_QUOTES, 'UTF-8'); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </form>
+                    <button onclick="openModal('purchaseModal')" class="flex items-center justify-center px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all duration-200 shadow-sm hover:shadow-md">
+                        <i data-feather="plus" class="ml-2"></i>
+                        خرید جدید
+                    </button>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div class="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm text-gray-500">مجموع خریدها</span>
+                        <i data-feather="shopping-bag" class="w-5 h-5 text-blue-500"></i>
+                    </div>
+                    <p class="text-xl font-semibold text-gray-800"><?php echo number_format((float) $purchaseSummary['total_amount']); ?> تومان</p>
+                    <p class="text-xs text-gray-500 mt-1"><?php echo number_format((float) $purchaseSummary['total_quantity']); ?> عدد در <?php echo (int) $purchaseSummary['purchase_count']; ?> فاکتور</p>
+                </div>
+                <div class="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm text-gray-500">مجموع مرجوعی‌ها</span>
+                        <i data-feather="corner-up-left" class="w-5 h-5 text-amber-500"></i>
+                    </div>
+                    <p class="text-xl font-semibold text-gray-800"><?php echo number_format((float) $returnSummary['total_amount']); ?> تومان</p>
+                    <p class="text-xs text-gray-500 mt-1"><?php echo number_format((float) $returnSummary['total_quantity']); ?> عدد در <?php echo (int) $returnSummary['return_count']; ?> فاکتور</p>
+                </div>
+                <div class="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm text-gray-500">خالص پرداختی</span>
+                        <i data-feather="activity" class="w-5 h-5 text-green-500"></i>
+                    </div>
+                    <p class="text-xl font-semibold text-gray-800"><?php echo number_format($netPurchaseAmount); ?> تومان</p>
+                    <p class="text-xs text-gray-500 mt-1">خریدها منهای مرجوعی‌ها</p>
+                </div>
             </div>
 
             <?php if (!empty($flash_messages['success']) || !empty($flash_messages['error'])): ?>
@@ -210,6 +362,7 @@ ORDER BY MAX(pr.created_at) DESC
                     <table class="w-full text-sm">
                         <thead class="bg-gray-50">
                             <tr>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">تامین‌کننده</th>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">نام محصول</th>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">رنگ</th>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">سایز ها</th>
@@ -221,23 +374,41 @@ ORDER BY MAX(pr.created_at) DESC
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-gray-100">
-                            <?php while ($item = $allPurchaseItems->fetch_assoc()): ?>
-                                <?php $purchase_date_display = htmlspecialchars(convert_gregorian_to_jalali_for_display((string) $item['purchase_date']), ENT_QUOTES, 'UTF-8'); ?>
+                            <?php if ($allPurchaseItems->num_rows > 0): ?>
+                                <?php while ($item = $allPurchaseItems->fetch_assoc()): ?>
+                                    <?php
+                                        $purchase_date_display = htmlspecialchars(convert_gregorian_to_jalali_for_display((string) $item['purchase_date']), ENT_QUOTES, 'UTF-8');
+                                        $supplier_name = htmlspecialchars($item['supplier_name'] ?? 'نامشخص', ENT_QUOTES, 'UTF-8');
+                                    ?>
+                                    <tr>
+                                        <td class="px-4 py-3 text-gray-800"><?php echo $supplier_name; ?></td>
+                                        <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['model_name'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                        <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['color'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                        <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['sizes'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                        <td class="px-4 py-3 text-gray-800"><?php echo number_format((float) $item['total_quantity']); ?></td>
+                                        <td class="px-4 py-3 text-gray-800"><?php echo number_format((float) $item['avg_buy_price']); ?> تومان</td>
+                                        <td class="px-4 py-3 text-gray-800"><?php echo number_format((float) $item['total_amount']); ?> تومان</td>
+                                        <td class="px-4 py-3 text-gray-800"><?php echo $purchase_date_display; ?></td>
+                                        <td class="px-4 py-3 text-gray-800">
+                                            <button type="button"
+                                                    class="px-3 py-1 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm"
+                                                    data-purchase-date="<?php echo $purchase_date_display; ?>"
+                                                    data-model-name="<?php echo htmlspecialchars($item['model_name'], ENT_QUOTES, 'UTF-8'); ?>"
+                                                    data-color="<?php echo htmlspecialchars($item['color'], ENT_QUOTES, 'UTF-8'); ?>"
+                                                    data-supplier-id="<?php echo (int) $item['supplier_id']; ?>"
+                                                    onclick="handleShowDetailedPurchases(this)">
+                                                نمایش جزئیات
+                                            </button>
+                                        </td>
+                                    </tr>
+                                <?php endwhile; ?>
+                            <?php else: ?>
                                 <tr>
-                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['model_name'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['color'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['sizes'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['total_quantity'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                    <td class="px-4 py-3 text-gray-800"><?php echo number_format($item['avg_buy_price'], 0); ?> تومان</td>
-                                    <td class="px-4 py-3 text-gray-800"><?php echo number_format($item['total_amount'], 0); ?> تومان</td>
-                                    <td class="px-4 py-3 text-gray-800"><?php echo $purchase_date_display; ?></td>
-                                    <td class="px-4 py-3 text-gray-800">
-                                        <button onclick="showDetailedPurchases('<?php echo $purchase_date_display; ?>', '<?php echo htmlspecialchars($item['model_name'], ENT_QUOTES, 'UTF-8'); ?>', '<?php echo htmlspecialchars($item['color'], ENT_QUOTES, 'UTF-8'); ?>')" class="px-3 py-1 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm">
-                                            نمایش جزئیات
-                                        </button>
+                                    <td colspan="9" class="px-4 py-6 text-center text-gray-500">
+                                        هیچ خریدی برای نمایش وجود ندارد.
                                     </td>
                                 </tr>
-                            <?php endwhile; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
@@ -280,13 +451,26 @@ ORDER BY MAX(pr.created_at) DESC
                                    value="<?php echo htmlspecialchars(get_current_jalali_date_string(), ENT_QUOTES, 'UTF-8'); ?>" placeholder="مثال: 1404/07/07" inputmode="numeric" pattern="[0-9]{4}/[0-9]{2}/[0-9]{2}" dir="ltr">
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">
-                                تامین کننده
+                            <label class="block text-sm font-medium text-gray-700 mb-2 flex items-center">
+                                <i data-feather="user-check" class="ml-1 w-4 h-4"></i>
+                                تامین‌کننده
+                                <span class="text-red-500 mr-1">*</span>
                             </label>
-                            <select class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 text-gray-500" disabled>
-                                <option>تامین کننده پیش فرض</option>
-                            </select>
-                            <p class="text-xs text-gray-500 mt-1">در حال حاضر فقط یک تامین کننده پشتیبانی می‌شود</p>
+                            <?php if (!empty($suppliers)): ?>
+                                <select name="supplier_id" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200" required>
+                                    <?php foreach ($suppliers as $supplier): ?>
+                                        <option value="<?php echo (int) $supplier['supplier_id']; ?>" <?php echo ($selectedSupplierId ?? null) === (int) $supplier['supplier_id'] ? 'selected' : ''; ?>>
+                                            <?php echo htmlspecialchars($supplier['name'], ENT_QUOTES, 'UTF-8'); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <p class="text-xs text-gray-500 mt-1">فاکتور به نام تامین‌کننده انتخابی ثبت خواهد شد.</p>
+                            <?php else: ?>
+                                <select class="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-100 text-gray-400" disabled>
+                                    <option>ابتدا تامین‌کننده‌ای ثبت کنید</option>
+                                </select>
+                                <p class="text-xs text-red-500 mt-1">برای ثبت خرید جدید ابتدا از بخش تامین‌کننده‌ها فردی را اضافه کنید.</p>
+                            <?php endif; ?>
                         </div>
                     </div>
                 </div>
@@ -352,7 +536,9 @@ ORDER BY MAX(pr.created_at) DESC
                         انصراف
                     </button>
                     <button type="submit" id="submitBtn"
-                            class="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all duration-200 font-medium flex items-center shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
+                            class="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all duration-200 font-medium flex items-center shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                            <?php echo empty($suppliers) ? 'disabled' : ''; ?>
+                    >
                         <i data-feather="check" class="ml-2"></i>
                         ثبت خرید
                     </button>
@@ -378,6 +564,7 @@ ORDER BY MAX(pr.created_at) DESC
                         <thead class="bg-gray-50">
                             <tr>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">نام محصول</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">تامین‌کننده</th>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">رنگ</th>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">سایز</th>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">تعداد</th>
@@ -882,24 +1069,52 @@ ORDER BY MAX(pr.created_at) DESC
             }
         }
 
-        function showDetailedPurchases(purchaseDate, modelName, color) {
-            const url = `get_all_purchase_items.php?purchase_date=${encodeURIComponent(purchaseDate)}&model_name=${encodeURIComponent(modelName)}&color=${encodeURIComponent(color)}`;
+        const numberFormatter = new Intl.NumberFormat('fa-IR');
+
+        function handleShowDetailedPurchases(button) {
+            const purchaseDate = button.getAttribute('data-purchase-date') || '';
+            const modelName = button.getAttribute('data-model-name') || '';
+            const color = button.getAttribute('data-color') || '';
+            const supplierId = button.getAttribute('data-supplier-id') || '';
+
+            showDetailedPurchases(purchaseDate, modelName, color, supplierId);
+        }
+
+        function showDetailedPurchases(purchaseDate, modelName, color, supplierId) {
+            let url = `get_all_purchase_items.php?purchase_date=${encodeURIComponent(purchaseDate)}&model_name=${encodeURIComponent(modelName)}&color=${encodeURIComponent(color)}`;
+            if (supplierId) {
+                url += `&supplier_id=${encodeURIComponent(supplierId)}`;
+            }
+
             fetch(url)
                 .then(response => response.json())
                 .then(data => {
                     const tbody = document.getElementById('detailedPurchasesTable').querySelector('tbody');
                     tbody.innerHTML = '';
+
+                    if (!Array.isArray(data) || data.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-3 text-center text-gray-500">هیچ رکوردی یافت نشد.</td></tr>';
+                        openModal('detailedPurchasesModal');
+                        return;
+                    }
+
                     data.forEach(item => {
+                        const quantity = numberFormatter.format(Number(item.quantity) || 0);
+                        const buyPrice = numberFormatter.format(Number(item.buy_price) || 0);
+                        const totalAmount = numberFormatter.format(Number(item.total_amount) || 0);
+                        const supplierName = item.supplier_name || 'نامشخص';
+
                         const row = `<tr>
                             <td class="px-4 py-3 text-gray-800">${item.model_name}</td>
+                            <td class="px-4 py-3 text-gray-800">${supplierName}</td>
                             <td class="px-4 py-3 text-gray-800">${item.color}</td>
                             <td class="px-4 py-3 text-gray-800">${item.size}</td>
-                            <td class="px-4 py-3 text-gray-800">${item.quantity}</td>
-                            <td class="px-4 py-3 text-gray-800">${item.buy_price} تومان</td>
-                            <td class="px-4 py-3 text-gray-800">${item.total_amount} تومان</td>
+                            <td class="px-4 py-3 text-gray-800">${quantity}</td>
+                            <td class="px-4 py-3 text-gray-800">${buyPrice} تومان</td>
+                            <td class="px-4 py-3 text-gray-800">${totalAmount} تومان</td>
                             <td class="px-4 py-3 text-gray-800">${item.purchase_date}</td>
                         </tr>`;
-                        tbody.innerHTML += row;
+                        tbody.insertAdjacentHTML('beforeend', row);
                     });
                     openModal('detailedPurchasesModal');
                 })

@@ -6,6 +6,22 @@ header('Content-Type: application/json');
 $purchase_date_input = isset($_GET['purchase_date']) ? (string) $_GET['purchase_date'] : null;
 $model_name = $_GET['model_name'] ?? null;
 $color = $_GET['color'] ?? null;
+$supplierId = null;
+
+if (isset($_GET['supplier_id']) && $_GET['supplier_id'] !== '') {
+    try {
+        $candidateSupplier = validate_int($_GET['supplier_id'], 1);
+        $supplierStmt = $conn->prepare('SELECT supplier_id FROM Suppliers WHERE supplier_id = ?');
+        $supplierStmt->bind_param('i', $candidateSupplier);
+        $supplierStmt->execute();
+        if ($supplierStmt->get_result()->fetch_row()) {
+            $supplierId = $candidateSupplier;
+        }
+        $supplierStmt->close();
+    } catch (Throwable) {
+        // Ignore invalid supplier filter
+    }
+}
 
 $purchase_date = null;
 if ($purchase_date_input !== null && $purchase_date_input !== '') {
@@ -19,16 +35,29 @@ if ($purchase_date_input !== null && $purchase_date_input !== '') {
 }
 
 if ($purchase_date && $model_name && $color) {
-    $stmt = $conn->prepare("
-        SELECT pr.purchase_date, p.model_name, pv.color, pv.size, pi.quantity, pi.buy_price, (pi.quantity * pi.buy_price) as total_amount
+    $query = "
+        SELECT pr.purchase_date, p.model_name, pv.color, pv.size, pi.quantity, pi.buy_price,
+               (pi.quantity * pi.buy_price) AS total_amount, s.name AS supplier_name
         FROM Purchases pr
         JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
         JOIN Product_Variants pv ON pi.variant_id = pv.variant_id
         JOIN Products p ON pv.product_id = p.product_id
+        JOIN Suppliers s ON pr.supplier_id = s.supplier_id
         WHERE pr.purchase_date = ? AND p.model_name = ? AND pv.color = ?
-        ORDER BY pr.purchase_date DESC, p.model_name, pv.color, pv.size
-    ");
-    $stmt->bind_param('sss', $purchase_date, $model_name, $color);
+    ";
+
+    if ($supplierId !== null) {
+        $query .= ' AND pr.supplier_id = ?';
+    }
+
+    $query .= ' ORDER BY pr.purchase_date DESC, p.model_name, pv.color, pv.size';
+
+    $stmt = $conn->prepare($query);
+    if ($supplierId !== null) {
+        $stmt->bind_param('sssi', $purchase_date, $model_name, $color, $supplierId);
+    } else {
+        $stmt->bind_param('sss', $purchase_date, $model_name, $color);
+    }
     $stmt->execute();
     $result = $stmt->get_result();
     $data = [];
@@ -38,20 +67,35 @@ if ($purchase_date && $model_name && $color) {
     }
     $stmt->close();
 } else {
-    $allPurchaseItems = $conn->query("
-        SELECT pr.purchase_date, p.model_name, pv.color, pv.size, pi.quantity, pi.buy_price, (pi.quantity * pi.buy_price) as total_amount
+    $query = "
+        SELECT pr.purchase_date, p.model_name, pv.color, pv.size, pi.quantity, pi.buy_price,
+               (pi.quantity * pi.buy_price) AS total_amount, s.name AS supplier_name
         FROM Purchases pr
         JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
         JOIN Product_Variants pv ON pi.variant_id = pv.variant_id
         JOIN Products p ON pv.product_id = p.product_id
-        ORDER BY pr.purchase_date DESC, p.model_name, pv.color, pv.size
-    ");
+        JOIN Suppliers s ON pr.supplier_id = s.supplier_id
+    ";
+
+    if ($supplierId !== null) {
+        $query .= ' WHERE pr.supplier_id = ?';
+    }
+
+    $query .= ' ORDER BY pr.purchase_date DESC, p.model_name, pv.color, pv.size';
+
+    $stmt = $conn->prepare($query);
+    if ($supplierId !== null) {
+        $stmt->bind_param('i', $supplierId);
+    }
+    $stmt->execute();
+    $result = $stmt->get_result();
 
     $data = [];
-    while ($item = $allPurchaseItems->fetch_assoc()) {
+    while ($item = $result->fetch_assoc()) {
         $item['purchase_date'] = convert_gregorian_to_jalali_for_display((string) $item['purchase_date']);
         $data[] = $item;
     }
+    $stmt->close();
 }
 
 echo json_encode($data);

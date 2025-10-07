@@ -36,6 +36,13 @@ $current_page = basename($_SERVER['PHP_SELF'], '.php');
             </li>
 
             <li>
+                <a href="suppliers.php" class="flex items-center px-4 py-3 <?php echo $current_page === 'suppliers' ? 'bg-blue-50 text-blue-700 rounded-lg border-r border-blue-500' : 'text-gray-700 rounded-lg hover:bg-gray-100 transition-colors'; ?>">
+                    <i data-feather="users" class="ml-2 w-5 h-5"></i>
+                    <span>تامین‌کننده‌ها</span>
+                </a>
+            </li>
+
+            <li>
                 <a href="monthly_purchases.php" class="flex items-center px-4 py-3 <?php echo $current_page === 'monthly_purchases' ? 'bg-blue-50 text-blue-700 rounded-lg border-r border-blue-500' : 'text-gray-700 rounded-lg hover:bg-gray-100 transition-colors'; ?>">
                     <i data-feather="file-text" class="ml-2 w-5 h-5"></i>
                     <span>فاکتور ماهانه</span>

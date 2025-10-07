@@ -3,6 +3,18 @@ require_once __DIR__ . '/env/bootstrap.php';
 
 $flash_messages = get_flash_messages();
 
+$suppliers = [];
+$supplierMap = [];
+$suppliersResult = $conn->query('SELECT supplier_id, name FROM Suppliers ORDER BY name');
+if ($suppliersResult) {
+    while ($row = $suppliersResult->fetch_assoc()) {
+        $row['supplier_id'] = (int) $row['supplier_id'];
+        $suppliers[] = $row;
+        $supplierMap[$row['supplier_id']] = $row['name'];
+    }
+    $suppliersResult->free();
+}
+
 // Get current month and year for default selection
 $current_jalali = get_current_jalali_date();
 $current_year = $current_jalali[0];
@@ -28,6 +40,41 @@ $gregorian_end = jalali_to_gregorian($selected_year, $selected_month, $selected_
 $start_date = sprintf('%04d-%02d-%02d', $gregorian_start[0], $gregorian_start[1], $gregorian_start[2]);
 $end_date = sprintf('%04d-%02d-%02d', $gregorian_end[0], $gregorian_end[1], $gregorian_end[2]);
 
+$selected_supplier_id = null;
+if (isset($_GET['supplier_id'])) {
+    $supplierFilterValue = $_GET['supplier_id'];
+    if ($supplierFilterValue !== '' && $supplierFilterValue !== 'all') {
+        try {
+            $candidateId = validate_int($supplierFilterValue, 1);
+            if (isset($supplierMap[$candidateId])) {
+                $selected_supplier_id = $candidateId;
+            }
+        } catch (Throwable) {
+            // Ignore invalid supplier filter and fallback to all suppliers
+        }
+    }
+}
+
+$selected_supplier_name = $selected_supplier_id !== null
+    ? ($supplierMap[$selected_supplier_id] ?? 'تامین‌کننده نامشخص')
+    : 'همه تامین‌کننده‌ها';
+
+$supplier_purchase_condition = $selected_supplier_id !== null
+    ? ' AND pu.supplier_id = ' . (int) $selected_supplier_id
+    : '';
+
+$supplier_return_condition = $selected_supplier_id !== null
+    ? ' AND prr.supplier_id = ' . (int) $selected_supplier_id
+    : '';
+
+$supplier_balance_condition = $selected_supplier_id !== null
+    ? ' AND sb.supplier_id = ' . (int) $selected_supplier_id
+    : '';
+
+$supplier_historical_balance_condition = $selected_supplier_id !== null
+    ? ' AND supplier_id = ' . (int) $selected_supplier_id
+    : '';
+
 // Get monthly purchases grouped by product
 $monthly_purchases_query = "
     SELECT
@@ -36,11 +83,11 @@ $monthly_purchases_query = "
         SUM(pi.quantity) AS total_quantity,
         AVG(pi.buy_price) AS avg_buy_price,
         SUM(pi.quantity * pi.buy_price) AS total_amount
-    FROM Purchases pr
-    JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
+    FROM Purchases pu
+    JOIN Purchase_Items pi ON pu.purchase_id = pi.purchase_id
     JOIN Product_Variants pv ON pi.variant_id = pv.variant_id
     JOIN Products p ON pv.product_id = p.product_id
-    WHERE pr.purchase_date BETWEEN '$start_date' AND '$end_date'
+    WHERE pu.purchase_date BETWEEN '$start_date' AND '$end_date'" . $supplier_purchase_condition . "
     GROUP BY p.product_id, p.model_name
     ORDER BY p.model_name
 ";
@@ -76,16 +123,16 @@ if ($monthly_purchases_result && $monthly_purchases_result->num_rows > 0) {
 // Get monthly returns (if any exist in Purchase_Returns table)
 $monthly_returns_query = "
     SELECT
-        pr.purchase_return_id,
-        pr.purchase_id,
-        pr.return_date,
-        pr.total_amount,
-        pr.note,
+        prr.purchase_return_id,
+        prr.purchase_id,
+        prr.return_date,
+        prr.total_amount,
+        prr.note,
         s.name AS supplier_name
-    FROM Purchase_Returns pr
-    LEFT JOIN Suppliers s ON pr.supplier_id = s.supplier_id
-    WHERE pr.return_date BETWEEN '$start_date' AND '$end_date'
-    ORDER BY pr.return_date
+    FROM Purchase_Returns prr
+    LEFT JOIN Suppliers s ON prr.supplier_id = s.supplier_id
+    WHERE prr.return_date BETWEEN '$start_date' AND '$end_date'" . $supplier_return_condition . "
+    ORDER BY prr.return_date
 ";
 
 $monthly_returns_result = $conn->query($monthly_returns_query);
@@ -108,12 +155,12 @@ $return_purchase_totals = [];
 if (!empty($return_totals_map)) {
     $return_purchase_totals_query = "
         SELECT
-            pr.purchase_return_id,
+            prr.purchase_return_id,
             SUM(pi.quantity * pi.buy_price) AS purchase_total
-        FROM Purchase_Returns pr
-        JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
-        WHERE pr.return_date BETWEEN '$start_date' AND '$end_date'
-        GROUP BY pr.purchase_return_id
+        FROM Purchase_Returns prr
+        JOIN Purchase_Items pi ON prr.purchase_id = pi.purchase_id
+        WHERE prr.return_date BETWEEN '$start_date' AND '$end_date'" . $supplier_return_condition . "
+        GROUP BY prr.purchase_return_id
     ";
 
     if ($purchase_totals_result = $conn->query($return_purchase_totals_query)) {
@@ -130,11 +177,11 @@ $returns_per_product_query = "
         p.model_name,
         SUM(prit.quantity) AS return_quantity,
         SUM(prit.quantity * prit.return_price) AS return_amount
-    FROM Purchase_Returns pr
-    JOIN Purchase_Return_Items prit ON pr.purchase_return_id = prit.purchase_return_id
+    FROM Purchase_Returns prr
+    JOIN Purchase_Return_Items prit ON prr.purchase_return_id = prit.purchase_return_id
     JOIN Product_Variants pv ON prit.variant_id = pv.variant_id
     JOIN Products p ON pv.product_id = p.product_id
-    WHERE pr.return_date BETWEEN '$start_date' AND '$end_date'
+    WHERE prr.return_date BETWEEN '$start_date' AND '$end_date'" . $supplier_return_condition . "
     GROUP BY p.product_id, p.model_name
 ";
 
@@ -178,7 +225,7 @@ $previous_debts_query = "
         sb.closing_balance
     FROM Supplier_Balances sb
     JOIN Suppliers s ON sb.supplier_id = s.supplier_id
-    WHERE (sb.balance_year < $selected_year OR (sb.balance_year = $selected_year AND sb.balance_month < $selected_month))
+    WHERE (sb.balance_year < $selected_year OR (sb.balance_year = $selected_year AND sb.balance_month < $selected_month))" . $supplier_balance_condition . "
     AND sb.closing_balance > 0
     ORDER BY sb.balance_year DESC, sb.balance_month DESC, s.name
 ";
@@ -205,7 +252,7 @@ $previous_invoices_query = "
         SUM(total_returns) AS monthly_returns,
         SUM(closing_balance) AS closing_balance
     FROM Supplier_Balances
-    WHERE (balance_year < $selected_year OR (balance_year = $selected_year AND balance_month < $selected_month))
+    WHERE (balance_year < $selected_year OR (balance_year = $selected_year AND balance_month < $selected_month))" . $supplier_historical_balance_condition . "
     GROUP BY balance_year, balance_month
     ORDER BY balance_year DESC, balance_month DESC
     LIMIT 12
@@ -259,8 +306,11 @@ foreach ($monthly_purchases_data as $product_data) {
     $total_current_stock += (int) ($product_data['current_stock'] ?? 0);
 }
 
-// Generate invoice number
-$invoice_number = sprintf('INV-%04d-%02d-%03d', $selected_year, $selected_month, rand(100, 999));
+// Generate invoice number including supplier context
+$invoice_supplier_segment = $selected_supplier_id !== null
+    ? 'S' . str_pad((string) $selected_supplier_id, 3, '0', STR_PAD_LEFT)
+    : 'ALL';
+$invoice_number = sprintf('INV-%04d-%02d-%s-%03d', $selected_year, $selected_month, $invoice_supplier_segment, rand(100, 999));
 ?>
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -576,6 +626,14 @@ $invoice_number = sprintf('INV-%04d-%02d-%03d', $selected_year, $selected_month,
                                 </option>
                             <?php endfor; ?>
                         </select>
+                        <select name="supplier_id" class="border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="all" <?php echo $selected_supplier_id === null ? 'selected' : ''; ?>>همه تامین‌کننده‌ها</option>
+                            <?php foreach ($suppliers as $supplier): ?>
+                                <option value="<?php echo (int) $supplier['supplier_id']; ?>" <?php echo $selected_supplier_id === (int) $supplier['supplier_id'] ? 'selected' : ''; ?>>
+                                    <?php echo htmlspecialchars($supplier['name'], ENT_QUOTES, 'UTF-8'); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
                         <button type="submit" class="flex items-center px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
                             <i data-feather="search" class="ml-2"></i>
                             نمایش
@@ -611,6 +669,7 @@ $invoice_number = sprintf('INV-%04d-%02d-%03d', $selected_year, $selected_month,
                     <div class="invoice-header">
                         <div class="mt-4">
                             <p class="text-lg">فاکتور خرید ماه <?php echo get_jalali_month_name($selected_month); ?> <?php echo $selected_year; ?></p>
+                            <p class="text-sm opacity-75 mt-1">تامین‌کننده: <?php echo htmlspecialchars($selected_supplier_name, ENT_QUOTES, 'UTF-8'); ?></p>
                             <p class="text-sm opacity-75">شماره فاکتور: <?php echo $invoice_number; ?></p>
                         </div>
                     </div>
@@ -622,6 +681,7 @@ $invoice_number = sprintf('INV-%04d-%02d-%03d', $selected_year, $selected_month,
                                 <h3 class="font-semibold text-gray-800 mb-3">اطلاعات دوره</h3>
                                 <ul class="space-y-2 text-sm text-gray-700 leading-relaxed">
                                     <li><strong class="text-gray-900">ماه انتخابی:</strong> <?php echo get_jalali_month_name($selected_month); ?> <?php echo $selected_year; ?></li>
+                                    <li><strong class="text-gray-900">تامین‌کننده:</strong> <?php echo htmlspecialchars($selected_supplier_name, ENT_QUOTES, 'UTF-8'); ?></li>
 
                                     <li><strong class="text-gray-900">تعداد محصولات در گزارش:</strong> <?php echo count($monthly_purchases_data); ?> مورد</li>
                                     <li><strong class="text-gray-900">موجودی فعلی محصولات:</strong> <?php echo number_format($total_current_stock, 0); ?> عدد</li>
