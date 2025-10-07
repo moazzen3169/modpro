@@ -43,8 +43,8 @@ $year_sales_count = $conn->query("SELECT COUNT(DISTINCT s.sale_id) as count FROM
 // Get best-selling products
 $best_selling = $conn->query("SELECT p.model_name, SUM(si.quantity) as total_sold FROM Products p JOIN Product_Variants pv ON p.product_id = pv.product_id JOIN Sale_Items si ON pv.variant_id = si.variant_id GROUP BY p.product_id ORDER BY total_sold DESC LIMIT 5");
 
-// Get low-stock products
-$low_stock = $conn->query("SELECT p.model_name, pv.color, pv.size, pv.stock FROM Products p JOIN Product_Variants pv ON p.product_id = pv.product_id WHERE pv.stock <= 5 ORDER BY pv.stock ASC LIMIT 10");
+// Get out-of-stock products
+$out_of_stock = $conn->query("SELECT p.model_name, pv.color, pv.size, pv.stock FROM Products p JOIN Product_Variants pv ON p.product_id = pv.product_id WHERE pv.stock = 0 ORDER BY pv.stock ASC LIMIT 10");
 
 // Get sales data for last 30 days for chart
 $sales_chart_data = [];
@@ -269,10 +269,10 @@ while ($row = $top_products_query->fetch_assoc()) {
                         </div>
                     </div>
 
-                    <!-- Low Stock Products -->
+                    <!-- Out of Stock Products -->
                     <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                         <div class="p-6 border-b border-gray-100">
-                            <h3 class="text-lg font-semibold text-gray-800">محصولات کم‌موجود</h3>
+                            <h3 class="text-lg font-semibold text-gray-800">محصولات نا موجود</h3>
                         </div>
                         <div class="overflow-x-auto">
                             <table class="w-full text-sm">
@@ -286,8 +286,8 @@ while ($row = $top_products_query->fetch_assoc()) {
                                 </thead>
                                 <tbody class="divide-y divide-gray-100">
                                     <?php
-                                    if ($low_stock->num_rows > 0) {
-                                        while($item = $low_stock->fetch_assoc()){
+                                    if ($out_of_stock->num_rows > 0) {
+                                        while($item = $out_of_stock->fetch_assoc()){
                                             $stock_class = $item['stock'] == 0 ? 'low-stock' : '';
                                             echo "<tr class='hover:bg-gray-50 {$stock_class}'>
                                                     <td class='px-6 py-4 text-gray-800'>{$item['model_name']}</td>
@@ -297,7 +297,7 @@ while ($row = $top_products_query->fetch_assoc()) {
                                                 </tr>";
                                         }
                                     } else {
-                                        echo "<tr><td colspan='4' class='px-6 py-8 text-center text-gray-500'>هیچ محصول کم‌موجودی وجود ندارد</td></tr>";
+                                        echo "<tr><td colspan='4' class='px-6 py-8 text-center text-gray-500'>هیچ محصول ناموجودی وجود ندارد</td></tr>";
                                     }
                                     ?>
                                 </tbody>
