@@ -70,6 +70,24 @@ function validate_int(mixed $value, int $min = 0): int
     return $int;
 }
 
+function validate_price(mixed $value): float
+{
+    if (is_string($value)) {
+        $value = str_replace([',', ' '], '', $value);
+    }
+
+    if (!is_numeric($value)) {
+        throw new InvalidArgumentException('قیمت وارد شده نامعتبر است.');
+    }
+
+    $price = (float) $value;
+    if ($price <= 0) {
+        throw new InvalidArgumentException('قیمت باید بزرگتر از صفر باشد.');
+    }
+
+    return round($price, 2);
+}
+
 function validate_enum(string $value, array $allowed): string
 {
     if (!in_array($value, $allowed, true)) {

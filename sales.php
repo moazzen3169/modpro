@@ -24,7 +24,13 @@ function handle_create_sale(mysqli $conn): void
         foreach ($raw_items as $item) {
             $variant_id = validate_int($item['variant_id'] ?? null, 1);
             $quantity = validate_int($item['quantity'] ?? null, 1);
-            $items[] = ['variant_id' => $variant_id, 'quantity' => $quantity];
+            $sell_price = validate_price($item['sell_price'] ?? null);
+
+            $items[] = [
+                'variant_id' => $variant_id,
+                'quantity' => $quantity,
+                'sell_price' => $sell_price,
+            ];
         }
 
         $insertSaleStmt = $conn->prepare('INSERT INTO Sales (customer_id, sale_date, payment_method, status) VALUES (?, ?, ?, ?)');
@@ -32,13 +38,14 @@ function handle_create_sale(mysqli $conn): void
         $insertSaleStmt->execute();
         $sale_id = (int) $conn->insert_id;
 
-        $variantStmt = $conn->prepare('SELECT price, stock FROM Product_Variants WHERE variant_id = ? FOR UPDATE');
+        $variantStmt = $conn->prepare('SELECT stock FROM Product_Variants WHERE variant_id = ? FOR UPDATE');
         $insertItemStmt = $conn->prepare('INSERT INTO Sale_Items (sale_id, variant_id, quantity, sell_price) VALUES (?, ?, ?, ?)');
         $updateStockStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock - ? WHERE variant_id = ?');
 
         foreach ($items as $item) {
             $variant_id = $item['variant_id'];
             $quantity = $item['quantity'];
+            $sell_price = $item['sell_price'];
 
             $variantStmt->bind_param('i', $variant_id);
             $variantStmt->execute();
@@ -53,9 +60,7 @@ function handle_create_sale(mysqli $conn): void
                 throw new RuntimeException('موجودی کافی برای برخی آیتم‌ها وجود ندارد.');
             }
 
-            $price = (float) $variant['price'];
-
-            $insertItemStmt->bind_param('iiid', $sale_id, $variant_id, $quantity, $price);
+            $insertItemStmt->bind_param('iiid', $sale_id, $variant_id, $quantity, $sell_price);
             $insertItemStmt->execute();
 
             $updateStockStmt->bind_param('ii', $quantity, $variant_id);
@@ -84,6 +89,7 @@ function handle_add_sale_item(mysqli $conn): void
         $sale_id = validate_int($_POST['sale_id'] ?? null, 1);
         $variant_id = validate_int($_POST['variant_id'] ?? null, 1);
         $quantity = validate_int($_POST['quantity'] ?? null, 1);
+        $sell_price = validate_price($_POST['sell_price'] ?? null);
 
         $saleCheckStmt = $conn->prepare('SELECT sale_id FROM Sales WHERE sale_id = ? FOR UPDATE');
         $saleCheckStmt->bind_param('i', $sale_id);
@@ -93,7 +99,7 @@ function handle_add_sale_item(mysqli $conn): void
             throw new RuntimeException('فروش انتخاب‌شده وجود ندارد.');
         }
 
-        $variantStmt = $conn->prepare('SELECT price, stock FROM Product_Variants WHERE variant_id = ? FOR UPDATE');
+        $variantStmt = $conn->prepare('SELECT stock FROM Product_Variants WHERE variant_id = ? FOR UPDATE');
         $variantStmt->bind_param('i', $variant_id);
         $variantStmt->execute();
         $variant = $variantStmt->get_result()->fetch_assoc();
@@ -105,10 +111,8 @@ function handle_add_sale_item(mysqli $conn): void
             throw new RuntimeException('موجودی کافی برای افزودن این آیتم وجود ندارد.');
         }
 
-        $price = (float) $variant['price'];
-
         $insertItemStmt = $conn->prepare('INSERT INTO Sale_Items (sale_id, variant_id, quantity, sell_price) VALUES (?, ?, ?, ?)');
-        $insertItemStmt->bind_param('iiid', $sale_id, $variant_id, $quantity, $price);
+        $insertItemStmt->bind_param('iiid', $sale_id, $variant_id, $quantity, $sell_price);
         $insertItemStmt->execute();
 
         $updateStockStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock - ? WHERE variant_id = ?');
@@ -157,13 +161,7 @@ function handle_edit_sale_item(mysqli $conn): void
         $new_variant_id = validate_int($_POST['variant_id'] ?? null, 1);
         $new_quantity = validate_int($_POST['quantity'] ?? null, 1);
 
-        $sell_price_input = $_POST['sell_price'] ?? null;
-        $sell_price = filter_var($sell_price_input, FILTER_VALIDATE_FLOAT);
-        if ($sell_price === false || $sell_price <= 0) {
-            throw new InvalidArgumentException('قیمت فروش نامعتبر است.');
-        }
-
-        $sell_price = round($sell_price, 2);
+        $sell_price = validate_price($_POST['sell_price'] ?? null);
 
         $currentItemStmt = $conn->prepare('SELECT variant_id, quantity FROM Sale_Items WHERE sale_item_id = ? FOR UPDATE');
         $currentItemStmt->bind_param('i', $sale_item_id);
@@ -766,6 +764,7 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
         let selectedColor = null;
         let selectedSize = null;
         let currentVariants = [];
+        let currentVariantInfo = null;
 
         function openModal(modalId) {
             if (modalId === 'newSaleModal') {
@@ -785,13 +784,18 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
             selectedColor = null;
             selectedSize = null;
             currentVariants = [];
-            
+            currentVariantInfo = null;
+
             document.getElementById('selectedItems').innerHTML = '';
             document.getElementById('saleItemsInputs').innerHTML = '';
             document.getElementById('subtotal').textContent = '0 تومان';
             document.getElementById('total').textContent = '0 تومان';
             document.getElementById('productSelect').value = '';
             document.getElementById('quantityInput').value = '1';
+            const sellPriceInput = document.getElementById('sellPriceInput');
+            if (sellPriceInput) {
+                sellPriceInput.value = '';
+            }
             
             // Hide selection sections
             document.getElementById('colorSelection').classList.add('hidden');
@@ -871,6 +875,7 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
             });
             
             // Load sizes for selected color
+            currentVariantInfo = null;
             loadSizes(selectedProductId, color);
         }
 
@@ -879,6 +884,11 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
             document.getElementById('sizeOptions').innerHTML = '<div class="col-span-6 flex justify-center"><div class="spinner"></div><span class="mr-2 text-gray-600">در حال بارگذاری...</span></div>';
             document.getElementById('sizeSelection').classList.remove('hidden');
             document.getElementById('quantitySelection').classList.add('hidden');
+            const sellPriceInput = document.getElementById('sellPriceInput');
+            if (sellPriceInput) {
+                sellPriceInput.value = '';
+            }
+            currentVariantInfo = null;
 
             // Filter variants by product and color
             const availableSizes = [];
@@ -943,7 +953,7 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
 
         function selectSize(size, stock, price, variantId) {
             selectedSize = size;
-            
+
             // Update UI - mark selected size
             document.querySelectorAll('.size-option').forEach(option => {
                 if (option.getAttribute('data-size') === size) {
@@ -959,21 +969,31 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
             document.getElementById('quantityInput').value = '1';
             
             // Update stock info
+            const sellPriceInput = document.getElementById('sellPriceInput');
+            const numericPrice = Number(price);
+            if (sellPriceInput) {
+                sellPriceInput.value = Number.isFinite(numericPrice) && numericPrice > 0 ? numericPrice : '';
+            }
+
+            const priceText = Number.isFinite(numericPrice) && numericPrice > 0
+                ? `${numericPrice.toLocaleString()} تومان`
+                : '—';
+
             document.getElementById('stockInfo').innerHTML = `
                 <div class="flex justify-between">
                     <span>موجودی:</span>
                     <span class="font-medium">${stock} عدد</span>
                 </div>
                 <div class="flex justify-between">
-                    <span>قیمت واحد:</span>
-                    <span class="font-medium">${price.toLocaleString()} تومان</span>
+                    <span>قیمت پایه (سیستمی):</span>
+                    <span class="font-medium">${priceText}</span>
                 </div>
             `;
-            
+
             // Store current variant info
             currentVariantInfo = {
                 variantId: variantId,
-                price: price,
+                basePrice: numericPrice,
                 stock: stock
             };
         }
@@ -981,6 +1001,8 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
         function addItemToSale() {
             const quantityInput = document.getElementById('quantityInput');
             const quantity = parseInt(quantityInput.value);
+            const sellPriceInput = document.getElementById('sellPriceInput');
+            const sellPriceValue = sellPriceInput ? parseFloat(sellPriceInput.value) : NaN;
 
             if (!selectedProductId || !selectedColor || !selectedSize) {
                 alert('لطفا محصول، رنگ و سایز را انتخاب کنید.');
@@ -992,20 +1014,32 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                 return;
             }
 
+            if (!currentVariantInfo) {
+                alert('لطفا ابتدا محصول را به طور کامل انتخاب کنید.');
+                return;
+            }
+
             if (quantity > currentVariantInfo.stock) {
                 alert('تعداد انتخاب شده بیشتر از موجودی است.');
                 return;
             }
+
+            if (!sellPriceInput || Number.isNaN(sellPriceValue) || sellPriceValue <= 0) {
+                alert('لطفا قیمت فروش معتبر وارد کنید.');
+                return;
+            }
+
+            const sellPrice = Math.round(sellPriceValue * 100) / 100;
 
             // Get product name
             const productSelect = document.getElementById('productSelect');
             const productName = productSelect.options[productSelect.selectedIndex].text;
 
             // Check if item already exists
-            const existingItem = saleItems.find(item => item.variantId === currentVariantInfo.variantId);
+            const existingItem = saleItems.find(item => item.variantId === currentVariantInfo.variantId && Math.abs(item.price - sellPrice) < 0.001);
             if (existingItem) {
                 existingItem.quantity += quantity;
-                existingItem.total = existingItem.quantity * existingItem.price;
+                existingItem.total = existingItem.quantity * sellPrice;
                 updateSelectedItemsDisplay();
                 updateTotals();
             } else {
@@ -1014,8 +1048,8 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                     variantId: currentVariantInfo.variantId,
                     productName: `${productName} - ${selectedColor} - ${selectedSize}`,
                     quantity: quantity,
-                    price: currentVariantInfo.price,
-                    total: quantity * currentVariantInfo.price
+                    price: sellPrice,
+                    total: quantity * sellPrice
                 };
                 saleItems.push(item);
                 addItemToDisplay(item);
@@ -1027,6 +1061,9 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
             // Reset quantity selection for next item
             document.getElementById('quantitySelection').classList.add('hidden');
             document.getElementById('quantityInput').value = '1';
+            if (sellPriceInput) {
+                sellPriceInput.value = '';
+            }
         }
 
         function addItemToDisplay(item) {
