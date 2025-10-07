@@ -357,94 +357,9 @@ $zero_stock_count = $conn->query("SELECT COUNT(DISTINCT p.product_id) as count F
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>مدیریت محصولات - SuitStore Manager Pro</title>
     <link rel="stylesheet" href="libs/vazirmatn.css">
+    <link rel="stylesheet" href="css/global.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/feather-icons"></script>
-    <style>
-        body {
-            font-family: 'Vazirmatn', sans-serif;
-        }
-
-        .sidebar-shadow {
-            box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
-        }
-
-        .header-shadow {
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
-
-        .card-hover {
-            transition: all 0.3s ease;
-        }
-
-        .card-hover:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
-        }
-
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: #f1f5f9;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #cbd5e1;
-            border-radius: 3px;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-            background: #94a3b8;
-        }
-
-        .modal-backdrop {
-            backdrop-filter: blur(4px);
-        }
-
-        .animate-fade-in {
-            animation: fadeIn 0.3s ease-in-out;
-        }
-
-        .animate-slide-up {
-            animation: slideUp 0.3s ease-out;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-
-        @keyframes slideUp {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .product-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-        }
-
-        .variant-row:hover {
-            background-color: #f9fafb;
-        }
-
-        .low-stock {
-            background-color: #fef2f2;
-            border-left: 4px solid #ef4444;
-        }
-
-        .out-of-stock {
-            background-color: #fef2f2;
-            border-left: 4px solid #dc2626;
-        }
-    </style>
 </head>
 <body class="bg-gray-50">
     <?php if (!empty($flash_messages['success']) || !empty($flash_messages['error'])): ?>

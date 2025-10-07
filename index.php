@@ -47,75 +47,7 @@ while ($row = $top_products_query->fetch_assoc()) {
     <script src="libs/tailwind.js"></script>
     <script src="libs/feather-icons.js"></script>
     <script src="libs/chart.js"></script>
-    <link href="libs/vazirmatn.css" rel="stylesheet">
-    <style>
-        body {
-            font-family: 'Vazirmatn', sans-serif;
-        }
-
-        .sidebar-shadow {
-            box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
-        }
-
-        .header-shadow {
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
-
-        .card-hover {
-            transition: all 0.3s ease;
-        }
-
-        .card-hover:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
-        }
-
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: #f1f5f9;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #cbd5e1;
-            border-radius: 3px;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-            background: #94a3b8;
-        }
-
-        .animate-fade-in {
-            animation: fadeIn 0.3s ease-in-out;
-        }
-
-        .animate-slide-up {
-            animation: slideUp 0.3s ease-out;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-
-        @keyframes slideUp {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .low-stock {
-            background-color: #fef2f2;
-            border-left: 4px solid #ef4444;
-        }
-    </style>
+    <link href="css/global.css" rel="stylesheet">
 </head>
 <body class="bg-gray-50">
     <div class="flex h-screen overflow-hidden">
