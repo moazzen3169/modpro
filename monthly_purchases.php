@@ -641,7 +641,7 @@ $invoice_number = sprintf('INV-%04d-%02d-%03d', $selected_year, $selected_month,
                                 <h3 class="font-semibold text-gray-800 mb-3">اطلاعات دوره</h3>
                                 <ul class="space-y-2 text-sm text-gray-700 leading-relaxed">
                                     <li><strong class="text-gray-900">ماه انتخابی:</strong> <?php echo get_jalali_month_name($selected_month); ?> <?php echo $selected_year; ?></li>
-                                    <li><strong class="text-gray-900">بازه محاسبه:</strong> <?php echo sprintf('%04d/%02d/%02d', $selected_year, $selected_month, 1); ?> تا <?php echo sprintf('%04d/%02d/%02d', $selected_year, $selected_month, $selected_month_days); ?></li>
+
                                     <li><strong class="text-gray-900">تعداد محصولات در گزارش:</strong> <?php echo count($monthly_purchases_data); ?> مورد</li>
                                     <li><strong class="text-gray-900">موجودی فعلی محصولات:</strong> <?php echo number_format($total_current_stock, 0); ?> عدد</li>
                                 </ul>
