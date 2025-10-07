@@ -62,7 +62,7 @@ $payment_methods = [
 ];
 $payment_text = htmlspecialchars($payment_methods[$sale['payment_method']] ?? $sale['payment_method'], ENT_QUOTES, 'UTF-8');
 $customer_name = htmlspecialchars($sale['customer_name'] ?: 'مشتری حضوری', ENT_QUOTES, 'UTF-8');
-$sale_date = htmlspecialchars((string) $sale['sale_date'], ENT_QUOTES, 'UTF-8');
+$sale_date = htmlspecialchars(convert_gregorian_to_jalali_for_display((string) $sale['sale_date']), ENT_QUOTES, 'UTF-8');
 $status_text = $sale['status'] === 'paid' ? 'پرداخت شده' : 'در انتظار پرداخت';
 $status_text = htmlspecialchars($status_text, ENT_QUOTES, 'UTF-8');
 ?>

@@ -6,6 +6,7 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
 }
 
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/../jalali_calendar.php';
 
 if (empty($_SESSION['user_id'])) {
     header('Location: login.php');
@@ -48,12 +49,11 @@ function redirect_with_message(string $location, string $type, string $message):
 
 function validate_date(string $value): string
 {
-    $date = DateTime::createFromFormat('Y-m-d', $value);
-    if (!$date || $date->format('Y-m-d') !== $value) {
+    try {
+        return jalali_to_gregorian_string($value);
+    } catch (Throwable $e) {
         throw new InvalidArgumentException('تاریخ نامعتبر است.');
     }
-
-    return $value;
 }
 
 function validate_int(mixed $value, int $min = 0): int

@@ -10,16 +10,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($action === 'create_purchase') {
             $supplierId = 1; // default supplier
-            $purchaseDate = $_POST['purchase_date'] ?? '';
+            $purchaseDateInput = (string) ($_POST['purchase_date'] ?? '');
+            try {
+                $purchaseDate = validate_date($purchaseDateInput);
+            } catch (Throwable $e) {
+                $purchaseDate = '';
+                $errors[] = normalize_error_message($e);
+            }
             $paymentMethod = 'cash';
             $status = 'completed';
             $items = $_POST['items'] ?? [];
 
             $errors = [];
-
-            if (empty($purchaseDate) || !strtotime($purchaseDate)) {
-                $errors[] = 'تاریخ خرید معتبر وارد کنید.';
-            }
 
             if (empty($items) || !is_array($items)) {
                 $errors[] = 'حداقل یک آیتم اضافه کنید.';
@@ -335,6 +337,7 @@ ORDER BY MAX(pr.created_at) DESC
                         </thead>
                         <tbody class="divide-y divide-gray-100">
                             <?php while ($item = $allPurchaseItems->fetch_assoc()): ?>
+                                <?php $purchase_date_display = htmlspecialchars(convert_gregorian_to_jalali_for_display((string) $item['purchase_date']), ENT_QUOTES, 'UTF-8'); ?>
                                 <tr>
                                     <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['model_name'], ENT_QUOTES, 'UTF-8'); ?></td>
                                     <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['color'], ENT_QUOTES, 'UTF-8'); ?></td>
@@ -342,9 +345,9 @@ ORDER BY MAX(pr.created_at) DESC
                                     <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['total_quantity'], ENT_QUOTES, 'UTF-8'); ?></td>
                                     <td class="px-4 py-3 text-gray-800"><?php echo number_format($item['avg_buy_price'], 0); ?> تومان</td>
                                     <td class="px-4 py-3 text-gray-800"><?php echo number_format($item['total_amount'], 0); ?> تومان</td>
-                                    <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['purchase_date'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td class="px-4 py-3 text-gray-800"><?php echo $purchase_date_display; ?></td>
                                     <td class="px-4 py-3 text-gray-800">
-                                        <button onclick="showDetailedPurchases('<?php echo htmlspecialchars($item['purchase_date'], ENT_QUOTES, 'UTF-8'); ?>', '<?php echo htmlspecialchars($item['model_name'], ENT_QUOTES, 'UTF-8'); ?>', '<?php echo htmlspecialchars($item['color'], ENT_QUOTES, 'UTF-8'); ?>')" class="px-3 py-1 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm">
+                                        <button onclick="showDetailedPurchases('<?php echo $purchase_date_display; ?>', '<?php echo htmlspecialchars($item['model_name'], ENT_QUOTES, 'UTF-8'); ?>', '<?php echo htmlspecialchars($item['color'], ENT_QUOTES, 'UTF-8'); ?>')" class="px-3 py-1 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm">
                                             نمایش جزئیات
                                         </button>
                                     </td>
@@ -387,9 +390,9 @@ ORDER BY MAX(pr.created_at) DESC
                                 تاریخ خرید
                                 <span class="text-red-500 mr-1">*</span>
                             </label>
-                            <input type="date" name="purchase_date" required 
+                            <input type="text" name="purchase_date" required
                                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                                   value="<?php echo date('Y-m-d'); ?>">
+                                   value="<?php echo htmlspecialchars(get_current_jalali_date_string(), ENT_QUOTES, 'UTF-8'); ?>" placeholder="مثال: 1404/07/07" inputmode="numeric" pattern="[0-9]{4}/[0-9]{2}/[0-9]{2}" dir="ltr">
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-2">
