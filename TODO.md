@@ -1,5 +1,7 @@
-- [x] Edit sidebar.php: Replace all 'border-r-2' with 'border-r' (7 instances)
-- [x] Edit purchases.php: Replace 'border-2' with 'border' (1 instance)
-- [x] Edit css/global.css: Change 'border-left: 4px' to 'border-left: 1px' in .low-stock and .out-of-stock
-- [x] Edit css/global.css: Change 'border: 2px' to 'border: 1px' in .color-option and .size-option
-- [x] Edit css/global.css: Change 'outline: 2px' to 'outline: 1px' in focus styles
+- [x] Include sidebar.php in the page layout
+- [x] Wrap content in flex layout with main
+- [x] Add no-print classes to sidebar and filter
+- [x] Redesign invoice HTML structure for standard invoice
+- [x] Update CSS for professional appearance
+- [x] Update print media queries for A5 size and 10px margins
+- [x] Test the layout

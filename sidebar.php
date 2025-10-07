@@ -3,7 +3,7 @@
 $current_page = basename($_SERVER['PHP_SELF'], '.php');
 ?>
 <!-- Sidebar -->
-<aside class="w-64 bg-white border-l border-gray-200 flex flex-col sidebar-shadow">
+<aside class="w-64 bg-white border-l border-gray-200 flex flex-col sidebar-shadow no-print">
     <div class="p-6 border-b border-gray-200">
         <h1 class="text-xl font-bold text-gray-800 flex items-center">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 ml-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
