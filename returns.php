@@ -156,6 +156,82 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['delete_return'])) {
 
 $flash_messages = get_flash_messages();
 
+$suppliersStmt = $conn->prepare('SELECT supplier_id, name FROM Suppliers ORDER BY name');
+$suppliersStmt->execute();
+$suppliersResult = $suppliersStmt->get_result();
+$suppliers = [];
+$supplierMap = [];
+while ($row = $suppliersResult->fetch_assoc()) {
+    $row['supplier_id'] = (int) $row['supplier_id'];
+    $suppliers[] = $row;
+    $supplierMap[$row['supplier_id']] = $row['name'];
+}
+$suppliersStmt->close();
+
+$selectedSupplierId = null;
+if (isset($_GET['supplier_id'])) {
+    $supplierFilterValue = $_GET['supplier_id'];
+    if ($supplierFilterValue !== '' && $supplierFilterValue !== 'all') {
+        try {
+            $candidateId = validate_int($supplierFilterValue, 1);
+            if (isset($supplierMap[$candidateId])) {
+                $selectedSupplierId = $candidateId;
+            }
+        } catch (Throwable) {
+            // Ignore invalid input and fallback to all suppliers
+        }
+    }
+}
+
+$selectedSupplierName = $selectedSupplierId !== null ? ($supplierMap[$selectedSupplierId] ?? '') : 'همه تامین‌کننده‌ها';
+
+$returnsSummaryQuery = "
+    SELECT
+        COUNT(DISTINCT r.purchase_return_id) AS return_count,
+        COALESCE(SUM(ri.quantity), 0) AS total_quantity,
+        COALESCE(SUM(ri.quantity * ri.return_price), 0) AS total_amount
+    FROM Purchase_Returns r
+    JOIN Purchase_Return_Items ri ON r.purchase_return_id = ri.purchase_return_id
+";
+
+$returnsSummaryStmt = $selectedSupplierId !== null
+    ? $conn->prepare($returnsSummaryQuery . ' WHERE r.supplier_id = ?')
+    : $conn->prepare($returnsSummaryQuery);
+
+if ($selectedSupplierId !== null) {
+    $returnsSummaryStmt->bind_param('i', $selectedSupplierId);
+}
+$returnsSummaryStmt->execute();
+$returnsSummary = $returnsSummaryStmt->get_result()->fetch_assoc() ?: [
+    'return_count' => 0,
+    'total_quantity' => 0,
+    'total_amount' => 0,
+];
+$returnsSummaryStmt->close();
+
+$returnsQuery = "
+    SELECT r.purchase_return_id, r.return_date, r.total_amount, r.note,
+           s.name AS supplier_name,
+           COUNT(ri.purchase_return_item_id) AS item_count
+    FROM purchase_returns r
+    LEFT JOIN purchase_return_items ri ON r.purchase_return_id = ri.purchase_return_id
+    LEFT JOIN suppliers s ON r.supplier_id = s.supplier_id
+";
+
+if ($selectedSupplierId !== null) {
+    $returnsQuery .= ' WHERE r.supplier_id = ?';
+}
+
+$returnsQuery .= ' GROUP BY r.purchase_return_id ORDER BY r.return_date DESC, r.purchase_return_id DESC';
+
+$returnsStmt = $conn->prepare($returnsQuery);
+if ($selectedSupplierId !== null) {
+    $returnsStmt->bind_param('i', $selectedSupplierId);
+}
+$returnsStmt->execute();
+$returnsResult = $returnsStmt->get_result();
+$returnsStmt->close();
+
 $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
 ?>
 <!DOCTYPE html>
@@ -177,10 +253,24 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
         <!-- Main Content -->
         <div class="flex-1 overflow-auto">
             <!-- Header -->
-            <header class="bg-white border-b border-gray-200 p-4 flex justify-between items-center shadow-sm">
-                <h2 class="text-xl font-semibold text-gray-800">مدیریت مرجوعی‌ها</h2>
-                <div class="flex items-center space-x-4 space-x-reverse">
-                    <button onclick="openModal('newReturnModal')" class="flex items-center px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors shadow-md">
+            <header class="bg-white border-b border-gray-200 p-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between shadow-sm">
+                <div>
+                    <h2 class="text-xl font-semibold text-gray-800">مدیریت مرجوعی‌ها</h2>
+                    <p class="text-sm text-gray-500 mt-1">نمایش مرجوعی‌های <?php echo htmlspecialchars($selectedSupplierName, ENT_QUOTES, 'UTF-8'); ?></p>
+                </div>
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                    <form method="get" class="flex items-center bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
+                        <label for="returnsSupplierFilter" class="text-sm text-gray-600 ml-2">تامین‌کننده</label>
+                        <select id="returnsSupplierFilter" name="supplier_id" onchange="this.form.submit()" class="border-0 focus:ring-0 text-sm text-gray-700 bg-transparent">
+                            <option value="" <?php echo $selectedSupplierId === null ? 'selected' : ''; ?>>همه تامین‌کننده‌ها</option>
+                            <?php foreach ($suppliers as $supplier): ?>
+                                <option value="<?php echo (int) $supplier['supplier_id']; ?>" <?php echo $selectedSupplierId === (int) $supplier['supplier_id'] ? 'selected' : ''; ?>>
+                                    <?php echo htmlspecialchars($supplier['name'], ENT_QUOTES, 'UTF-8'); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </form>
+                    <button onclick="openModal('newReturnModal')" class="flex items-center justify-center px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors shadow-md">
                         <i data-feather="plus" class="ml-2 w-4 h-4"></i>
                         <span>مرجوعی جدید</span>
                     </button>
@@ -189,6 +279,33 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
 
             <!-- Returns Content -->
             <main class="p-6">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <div class="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm text-gray-500">تعداد مرجوعی‌ها</span>
+                            <i data-feather="layers" class="w-5 h-5 text-blue-500"></i>
+                        </div>
+                        <p class="text-xl font-semibold text-gray-800"><?php echo number_format((float) $returnsSummary['return_count']); ?> فاکتور</p>
+                        <p class="text-xs text-gray-500 mt-1">تامین‌کننده: <?php echo htmlspecialchars($selectedSupplierName, ENT_QUOTES, 'UTF-8'); ?></p>
+                    </div>
+                    <div class="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm text-gray-500">تعداد آیتم‌ها</span>
+                            <i data-feather="package" class="w-5 h-5 text-amber-500"></i>
+                        </div>
+                        <p class="text-xl font-semibold text-gray-800"><?php echo number_format((float) $returnsSummary['total_quantity']); ?> عدد</p>
+                        <p class="text-xs text-gray-500 mt-1">جمع کل اقلام مرجوعی</p>
+                    </div>
+                    <div class="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm text-gray-500">مبلغ مرجوعی‌ها</span>
+                            <i data-feather="corner-up-left" class="w-5 h-5 text-red-500"></i>
+                        </div>
+                        <p class="text-xl font-semibold text-gray-800"><?php echo number_format((float) $returnsSummary['total_amount']); ?> تومان</p>
+                        <p class="text-xs text-gray-500 mt-1">مجموع مبالغ بازگشت داده شده</p>
+                    </div>
+                </div>
+
                 <?php if (!empty($flash_messages['success']) || !empty($flash_messages['error'])): ?>
                     <div class="space-y-3 mb-6">
                         <?php foreach ($flash_messages['success'] as $message): ?>
@@ -219,48 +336,47 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-100">
-                            <?php
-$returns = $conn->query("SELECT r.purchase_return_id, r.return_date, r.total_amount, r.note, s.name as supplier_name, COUNT(ri.purchase_return_item_id) as item_count FROM purchase_returns r LEFT JOIN purchase_return_items ri ON r.purchase_return_id = ri.purchase_return_id LEFT JOIN suppliers s ON r.supplier_id = s.supplier_id GROUP BY r.purchase_return_id ORDER BY r.return_date DESC, r.purchase_return_id DESC");
-
-                            if ($returns->num_rows > 0) {
-                                while($return = $returns->fetch_assoc()){
-                                    $return_id = (int) $return['purchase_return_id'];
-                                    $supplier_name = htmlspecialchars($return['supplier_name'] ?: 'تامین‌کننده نامشخص', ENT_QUOTES, 'UTF-8');
-                                    $return_date = htmlspecialchars(convert_gregorian_to_jalali_for_display((string) $return['return_date']), ENT_QUOTES, 'UTF-8');
-                                    $note = htmlspecialchars((string) ($return['note'] ?? ''), ENT_QUOTES, 'UTF-8');
-                                    $item_count = (int) $return['item_count'];
-                                    $total_amount = number_format((float) ($return['total_amount'] ?? 0), 0);
-
-                                    echo "<tr class='hover:bg-gray-50'>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>#مرجوعی-{$return_id}</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$supplier_name}</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$return_date}</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$note}</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>{$item_count}</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900'>{$total_amount} تومان</td>
-                                            <td class='px-6 py-4 whitespace-nowrap text-sm font-medium'>
-                                                <div class='flex space-x-2 space-x-reverse'>
-                                                    <button onclick='showReturnItems({$return_id})' class='p-1 bg-blue-100 rounded text-blue-600 hover:bg-blue-200 transition-colors' title='مشاهده آیتم‌ها'>
-                                                        <i data-feather='eye' class='w-4 h-4'></i>
-                                                    </button>
-                                                    <a href='?delete_return={$return_id}' onclick='return confirm(\"آیا مطمئن هستید که می‌خواهید این مرجوعی را حذف کنید؟\")' class='p-1 bg-red-100 rounded text-red-600 hover:bg-red-200 transition-colors' title='حذف'>
-                                                        <i data-feather='trash-2' class='w-4 h-4'></i>
-                                                    </a>
-                                                </div>
-                                            </td>
-                                        </tr>";
-                                }
-                            } else {
-                                echo "<tr><td colspan='7' class='px-6 py-8 text-center'>
+                            <?php if ($returnsResult->num_rows > 0): ?>
+                                <?php while ($return = $returnsResult->fetch_assoc()): ?>
+                                    <?php
+                                        $return_id = (int) $return['purchase_return_id'];
+                                        $supplier_name = htmlspecialchars($return['supplier_name'] ?: 'تامین‌کننده نامشخص', ENT_QUOTES, 'UTF-8');
+                                        $return_date = htmlspecialchars(convert_gregorian_to_jalali_for_display((string) $return['return_date']), ENT_QUOTES, 'UTF-8');
+                                        $note = htmlspecialchars((string) ($return['note'] ?? ''), ENT_QUOTES, 'UTF-8');
+                                        $item_count = (int) $return['item_count'];
+                                        $total_amount = number_format((float) ($return['total_amount'] ?? 0), 0);
+                                    ?>
+                                    <tr class='hover:bg-gray-50'>
+                                        <td class='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>#مرجوعی-<?php echo $return_id; ?></td>
+                                        <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'><?php echo $supplier_name; ?></td>
+                                        <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'><?php echo $return_date; ?></td>
+                                        <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'><?php echo $note; ?></td>
+                                        <td class='px-6 py-4 whitespace-nowrap text-sm text-gray-500'><?php echo $item_count; ?></td>
+                                        <td class='px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900'><?php echo $total_amount; ?> تومان</td>
+                                        <td class='px-6 py-4 whitespace-nowrap text-sm font-medium'>
+                                            <div class='flex space-x-2 space-x-reverse'>
+                                                <button onclick='showReturnItems(<?php echo $return_id; ?>)' class='p-1 bg-blue-100 rounded text-blue-600 hover:bg-blue-200 transition-colors' title='مشاهده آیتم‌ها'>
+                                                    <i data-feather='eye' class='w-4 h-4'></i>
+                                                </button>
+                                                <a href='?delete_return=<?php echo $return_id; ?>' onclick='return confirm("آیا مطمئن هستید که می‌خواهید این مرجوعی را حذف کنید؟")' class='p-1 bg-red-100 rounded text-red-600 hover:bg-red-200 transition-colors' title='حذف'>
+                                                    <i data-feather='trash-2' class='w-4 h-4'></i>
+                                                </a>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                <?php endwhile; ?>
+                            <?php else: ?>
+                                <tr>
+                                    <td colspan='7' class='px-6 py-8 text-center'>
                                         <i data-feather='refresh-ccw' class='w-12 h-12 text-gray-400 mx-auto mb-4'></i>
                                         <h3 class='text-lg font-medium text-gray-700 mb-2'>هنوز مرجوعی‌ای ثبت نشده است</h3>
                                         <p class='text-gray-500 mb-4'>برای شروع، اولین مرجوعی خود را ثبت کنید</p>
-                                        <button onclick='openModal(\"newReturnModal\")' class='px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors'>
+                                        <button onclick='openModal("newReturnModal")' class='px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors'>
                                             ایجاد اولین مرجوعی
                                         </button>
-                                    </td></tr>";
-                            }
-                            ?>
+                                    </td>
+                                </tr>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
@@ -349,12 +465,11 @@ $returns = $conn->query("SELECT r.purchase_return_id, r.return_date, r.total_amo
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">تامین‌کننده</label>
                                                     <select name="supplier_id" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                                                         <option value="">انتخاب تامین‌کننده...</option>
-                                                        <?php
-                                                        $suppliers = $conn->query("SELECT * FROM suppliers ORDER BY name");
-                                                        while($supplier = $suppliers->fetch_assoc()){
-                                                            echo "<option value='{$supplier['supplier_id']}'>{$supplier['name']}</option>";
-                                                        }
-                                                        ?>
+                                                        <?php foreach ($suppliers as $supplier): ?>
+                                                            <option value="<?php echo (int) $supplier['supplier_id']; ?>" <?php echo $selectedSupplierId === (int) $supplier['supplier_id'] ? 'selected' : ''; ?>>
+                                                                <?php echo htmlspecialchars($supplier['name'], ENT_QUOTES, 'UTF-8'); ?>
+                                                            </option>
+                                                        <?php endforeach; ?>
                                                     </select>
                                                 </div>
                                                 <div>
