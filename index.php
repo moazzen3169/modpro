@@ -44,12 +44,10 @@ while ($row = $top_products_query->fetch_assoc()) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>داشبورد - SuitStore Manager Pro</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/feather-icons"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@100..900&display=swap" rel="stylesheet">
+    <script src="libs/tailwind.js"></script>
+    <script src="libs/feather-icons.js"></script>
+    <script src="libs/chart.js"></script>
+    <link href="libs/vazirmatn.css" rel="stylesheet">
     <style>
         body {
             font-family: 'Vazirmatn', sans-serif;
