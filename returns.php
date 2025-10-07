@@ -16,30 +16,63 @@ function handle_create_return(mysqli $conn): void
             throw new InvalidArgumentException('برای ثبت مرجوعی حداقل یک آیتم لازم است.');
         }
 
+        $supplier_id = validate_int($_POST['supplier_id'] ?? null, 1);
+        $supplierStmt = $conn->prepare('SELECT supplier_id FROM Suppliers WHERE supplier_id = ?');
+        $supplierStmt->bind_param('i', $supplier_id);
+        $supplierStmt->execute();
+        if (!$supplierStmt->get_result()->fetch_row()) {
+            throw new InvalidArgumentException('تامین‌کننده انتخاب‌شده معتبر نیست.');
+        }
+
         $items = [];
         foreach ($raw_items as $item) {
             $variant_id = validate_int($item['variant_id'] ?? null, 1);
             $quantity = validate_int($item['quantity'] ?? null, 1);
-            $return_price = (float) ($item['return_price'] ?? 0);
-            $items[] = ['variant_id' => $variant_id, 'quantity' => $quantity, 'return_price' => $return_price];
+            $raw_price = $item['return_price'] ?? null;
+            if ($raw_price === null || !is_numeric($raw_price)) {
+                throw new InvalidArgumentException('قیمت مرجوعی برای برخی آیتم‌ها نامعتبر است.');
+            }
+            $return_price = (float) $raw_price;
+            if ($return_price < 0) {
+                throw new InvalidArgumentException('قیمت مرجوعی نمی‌تواند منفی باشد.');
+            }
+
+            $items[] = [
+                'variant_id' => $variant_id,
+                'quantity' => $quantity,
+                'return_price' => $return_price,
+            ];
         }
 
-        $supplier_id = validate_int($_POST['supplier_id'] ?: 1, 1);
         $note = trim((string)($_POST['note'] ?? ''));
 
-        $insertReturnStmt = $conn->prepare('INSERT INTO purchase_returns (supplier_id, return_date, total_amount, note) VALUES (?, ?, 0, ?)');
         $total_amount = array_sum(array_map(fn($item) => $item['quantity'] * $item['return_price'], $items));
+
+        $insertReturnStmt = $conn->prepare('INSERT INTO purchase_returns (supplier_id, return_date, total_amount, note) VALUES (?, ?, ?, ?)');
         $insertReturnStmt->bind_param('isds', $supplier_id, $return_date, $total_amount, $note);
         $insertReturnStmt->execute();
         $return_id = (int) $conn->insert_id;
 
+        $variantStockStmt = $conn->prepare('SELECT stock FROM Product_Variants WHERE variant_id = ? FOR UPDATE');
         $insertItemStmt = $conn->prepare('INSERT INTO purchase_return_items (purchase_return_id, variant_id, quantity, return_price) VALUES (?, ?, ?, ?)');
-        $updateStockStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?');
+        $updateStockStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock - ? WHERE variant_id = ?');
 
         foreach ($items as $item) {
             $variant_id = $item['variant_id'];
             $quantity = $item['quantity'];
             $return_price = $item['return_price'];
+
+            $variantStockStmt->bind_param('i', $variant_id);
+            $variantStockStmt->execute();
+            $variantRow = $variantStockStmt->get_result()->fetch_assoc();
+            if (!$variantRow) {
+                throw new InvalidArgumentException('محصول انتخاب‌شده یافت نشد.');
+            }
+
+            $currentStock = (int) $variantRow['stock'];
+            if ($quantity > $currentStock) {
+                throw new InvalidArgumentException('تعداد انتخاب‌شده بیشتر از موجودی انبار است.');
+            }
 
             $insertItemStmt->bind_param('iiid', $return_id, $variant_id, $quantity, $return_price);
             $insertItemStmt->execute();
@@ -47,11 +80,6 @@ function handle_create_return(mysqli $conn): void
             $updateStockStmt->bind_param('ii', $quantity, $variant_id);
             $updateStockStmt->execute();
         }
-
-        // Update total_amount
-        $updateTotalStmt = $conn->prepare('UPDATE purchase_returns SET total_amount = ? WHERE purchase_return_id = ?');
-        $updateTotalStmt->bind_param('di', $total_amount, $return_id);
-        $updateTotalStmt->execute();
 
         $conn->commit();
         redirect_with_message('returns.php', 'success', 'مرجوعی خرید جدید با موفقیت ثبت شد و موجودی به‌روزرسانی گردید.');
@@ -87,7 +115,7 @@ function handle_delete_return(mysqli $conn): void
         $itemsStmt->execute();
         $itemsResult = $itemsStmt->get_result();
 
-        $decreaseStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock - ? WHERE variant_id = ?');
+        $increaseStmt = $conn->prepare('UPDATE Product_Variants SET stock = stock + ? WHERE variant_id = ?');
         while ($item = $itemsResult->fetch_assoc()) {
             $quantity = (int) $item['quantity'];
             if ($quantity <= 0) {
@@ -95,8 +123,8 @@ function handle_delete_return(mysqli $conn): void
             }
 
             $variant_id = (int) $item['variant_id'];
-            $decreaseStmt->bind_param('ii', $quantity, $variant_id);
-            $decreaseStmt->execute();
+            $increaseStmt->bind_param('ii', $quantity, $variant_id);
+            $increaseStmt->execute();
         }
 
         $deleteItemsStmt = $conn->prepare('DELETE FROM purchase_return_items WHERE purchase_return_id = ?');
@@ -314,37 +342,12 @@ $returns = $conn->query("SELECT r.purchase_return_id, r.return_date, r.total_amo
                                     </div>
 
                                     <div>
-                                        <h4 class="font-medium text-gray-700 mb-3">جزئیات مرجوعی</h4>
+                                        <h4 class="font-medium text-gray-700 mb-3">جزئیات مرجوعی تامین‌کننده</h4>
                                         <div class="bg-gray-50 p-4 rounded-lg">
                                             <div class="space-y-4">
                                                 <div>
-                                                    <label class="block text-sm font-medium text-gray-700 mb-2">نوع مرجوعی</label>
-                                                    <div class="flex space-x-4 space-x-reverse">
-                                                        <label class="flex items-center">
-                                                            <input type="radio" name="return_type" value="sales" checked class="ml-2" onchange="toggleReturnType()">
-                                                            <span>مرجوعی فروش</span>
-                                                        </label>
-                                                        <label class="flex items-center">
-                                                            <input type="radio" name="return_type" value="purchase" class="ml-2" onchange="toggleReturnType()">
-                                                            <span>مرجوعی خرید</span>
-                                                        </label>
-                                                    </div>
-                                                </div>
-                                                <div id="customerField">
-                                                    <label class="block text-sm font-medium text-gray-700 mb-1">مشتری</label>
-                                                    <select name="customer_id" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                                        <option value="0">مشتری حضوری</option>
-                                                        <?php
-                                                        $customers = $conn->query("SELECT * FROM Customers ORDER BY name");
-                                                        while($customer = $customers->fetch_assoc()){
-                                                            echo "<option value='{$customer['customer_id']}'>{$customer['name']}</option>";
-                                                        }
-                                                        ?>
-                                                    </select>
-                                                </div>
-                                                <div id="supplierField" class="hidden">
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">تامین‌کننده</label>
-                                                    <select name="supplier_id" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                                    <select name="supplier_id" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                                                         <option value="">انتخاب تامین‌کننده...</option>
                                                         <?php
                                                         $suppliers = $conn->query("SELECT * FROM suppliers ORDER BY name");
@@ -358,11 +361,7 @@ $returns = $conn->query("SELECT r.purchase_return_id, r.return_date, r.total_amo
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">تاریخ مرجوعی</label>
                                                     <input type="text" name="return_date" value="<?php echo htmlspecialchars(get_current_jalali_date_string(), ENT_QUOTES, 'UTF-8'); ?>" placeholder="مثال: 1404/07/07" inputmode="numeric" pattern="[0-9]{4}/[0-9]{2}/[0-9]{2}" dir="ltr" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                                                 </div>
-                                                <div id="reasonField">
-                                                    <label class="block text-sm font-medium text-gray-700 mb-1">دلیل مرجوعی</label>
-                                                    <textarea name="reason" rows="3" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="دلیل مرجوعی را وارد کنید..."></textarea>
-                                                </div>
-                                                <div id="noteField" class="hidden">
+                                                <div>
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">یادداشت</label>
                                                     <textarea name="note" rows="3" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="یادداشت مرجوعی را وارد کنید..."></textarea>
                                                 </div>
@@ -746,29 +745,14 @@ $returns = $conn->query("SELECT r.purchase_return_id, r.return_date, r.total_amo
             });
         }
 
-        function toggleReturnType() {
-            const returnType = document.querySelector('input[name="return_type"]:checked').value;
-            const customerField = document.getElementById('customerField');
-            const supplierField = document.getElementById('supplierField');
-            const reasonField = document.getElementById('reasonField');
-            const noteField = document.getElementById('noteField');
-
-            if (returnType === 'sales') {
-                customerField.classList.remove('hidden');
-                supplierField.classList.add('hidden');
-                reasonField.classList.remove('hidden');
-                noteField.classList.add('hidden');
-            } else if (returnType === 'purchase') {
-                customerField.classList.add('hidden');
-                supplierField.classList.remove('hidden');
-                reasonField.classList.add('hidden');
-                noteField.classList.remove('hidden');
-            }
-        }
-
         function validateReturnForm() {
             if (returnItems.length === 0) {
                 alert('لطفا حداقل یک محصول به مرجوعی اضافه کنید.');
+                return false;
+            }
+            const supplierSelect = document.querySelector('select[name="supplier_id"]');
+            if (!supplierSelect || !supplierSelect.value) {
+                alert('لطفا تامین‌کننده را انتخاب کنید.');
                 return false;
             }
             return true;
