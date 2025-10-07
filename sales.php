@@ -387,7 +387,6 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
     <link rel="stylesheet" href="libs/jquery.dataTables.min.css">
     <script src="libs/jquery-3.6.0.min.js"></script>
     <script src="libs/jquery.dataTables.min.js"></script>
-    <script src="libs/datatables-fa.json"></script>
     <link href="css/global.css" rel="stylesheet">
         
 </head>
@@ -575,7 +574,7 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                                                         </div>
                                                         <div>
                                                             <label class="block text-sm font-medium text-gray-700 mb-1">قیمت فروش (تومان)</label>
-                                                            <input type="number" id="sellPriceInput" step="0.01" min="0.01" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                                            <input type="number" id="sellPriceInput" step="0.01" min="0.01" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                                                         </div>
                                                         <div class="flex items-end">
                                                             <button type="button" onclick="addItemToSale()" class="w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 transition-colors">
@@ -1324,71 +1323,73 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
         });
 
         // Out of stock functionality
-        document.getElementById('showOutOfStockBtn').addEventListener('click', function() {
-            const detailsDiv = document.getElementById('outOfStockDetails');
-            const btn = this;
+        const outOfStockButton = document.getElementById('showOutOfStockBtn');
+        if (outOfStockButton) {
+            outOfStockButton.addEventListener('click', function() {
+                const detailsDiv = document.getElementById('outOfStockDetails');
 
-            if (detailsDiv.classList.contains('hidden')) {
-                // Show loading state
-                detailsDiv.innerHTML = `
-                    <div class="flex justify-center items-center py-8">
-                        <div class="spinner"></div>
-                        <span class="mr-2 text-gray-600">در حال بارگذاری...</span>
-                    </div>
-                `;
-                detailsDiv.classList.remove('hidden');
+                if (detailsDiv.classList.contains('hidden')) {
+                    // Show loading state
+                    detailsDiv.innerHTML = `
+                        <div class="flex justify-center items-center py-8">
+                            <div class="spinner"></div>
+                            <span class="mr-2 text-gray-600">در حال بارگذاری...</span>
+                        </div>
+                    `;
+                    detailsDiv.classList.remove('hidden');
 
-                // Load out of stock data
-                fetch('get_out_of_stock.php')
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.products && data.products.length > 0) {
-                            let html = '<div class="space-y-4">';
+                    // Load out of stock data
+                    fetch('get_out_of_stock.php')
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.products && data.products.length > 0) {
+                                let html = '<div class="space-y-4">';
 
-                            data.products.forEach(product => {
-                                html += `
-                                    <div class="border border-gray-200 rounded-lg p-4">
-                                        <div class="flex justify-between items-start mb-2">
-                                            <div>
-                                                <h4 class="font-semibold text-gray-800">${product.model_name}</h4>
-                                                <p class="text-sm text-gray-600">برند: ${product.brand} | دسته‌بندی: ${product.category}</p>
+                                data.products.forEach(product => {
+                                    html += `
+                                        <div class="border border-gray-200 rounded-lg p-4">
+                                            <div class="flex justify-between items-start mb-2">
+                                                <div>
+                                                    <h4 class="font-semibold text-gray-800">${product.model_name}</h4>
+                                                    <p class="text-sm text-gray-600">برند: ${product.brand} | دسته‌بندی: ${product.category}</p>
+                                                </div>
+                                            </div>
+                                            <div class="text-sm text-gray-700">
+                                                <strong>تنوع‌های تمام شده:</strong>
+                                                <div class="mt-1 text-red-600">${product.out_of_stock_variants}</div>
                                             </div>
                                         </div>
-                                        <div class="text-sm text-gray-700">
-                                            <strong>تنوع‌های تمام شده:</strong>
-                                            <div class="mt-1 text-red-600">${product.out_of_stock_variants}</div>
-                                        </div>
+                                    `;
+                                });
+
+                                html += '</div>';
+                                detailsDiv.innerHTML = html;
+                            } else {
+                                detailsDiv.innerHTML = `
+                                    <div class="text-center py-8 text-gray-500">
+                                        <i data-feather="check-circle" class="w-12 h-12 mx-auto mb-4 text-green-500"></i>
+                                        <p>هیچ محصولی تمام نشده است.</p>
                                     </div>
                                 `;
-                            });
+                            }
 
-                            html += '</div>';
-                            detailsDiv.innerHTML = html;
-                        } else {
+                            feather.replace();
+                        })
+                        .catch(error => {
+                            console.error('Error loading out of stock items:', error);
                             detailsDiv.innerHTML = `
-                                <div class="text-center py-8 text-gray-500">
-                                    <i data-feather="check-circle" class="w-12 h-12 mx-auto mb-4 text-green-500"></i>
-                                    <p>هیچ محصولی تمام نشده است.</p>
+                                <div class="text-center py-8 text-red-500">
+                                    <i data-feather="alert-circle" class="w-12 h-12 mx-auto mb-4"></i>
+                                    <p>خطا در بارگذاری محصولات تمام شده</p>
                                 </div>
                             `;
-                        }
-
-                        feather.replace();
-                    })
-                    .catch(error => {
-                        console.error('Error loading out of stock items:', error);
-                        detailsDiv.innerHTML = `
-                            <div class="text-center py-8 text-red-500">
-                                <i data-feather="alert-circle" class="w-12 h-12 mx-auto mb-4"></i>
-                                <p>خطا در بارگذاری محصولات تمام شده</p>
-                            </div>
-                        `;
-                        feather.replace();
-                    });
-            } else {
-                detailsDiv.classList.add('hidden');
-            }
-        });
+                            feather.replace();
+                        });
+                } else {
+                    detailsDiv.classList.add('hidden');
+                }
+            });
+        }
     </script>
 </body>
 </html>
