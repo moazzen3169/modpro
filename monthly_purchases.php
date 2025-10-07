@@ -21,19 +21,21 @@ if ($selected_year < 1390 || $selected_year > $current_year + 10) {
 }
 
 // Convert Jalali to Gregorian for database queries
+$selected_month_days = get_jalali_month_days($selected_year, $selected_month);
 $gregorian_start = jalali_to_gregorian($selected_year, $selected_month, 1);
-$gregorian_end = jalali_to_gregorian($selected_year, $selected_month, is_jalali_leap_year($selected_year) ? ($selected_month <= 6 ? 31 : ($selected_month == 12 ? 29 : 30)) : ($selected_month <= 6 ? 31 : ($selected_month == 12 ? 29 : 30)));
+$gregorian_end = jalali_to_gregorian($selected_year, $selected_month, $selected_month_days);
 
-$start_date = sprintf('%04d-%02d-%02d', $gregorian_start[0], $gregorian_start[1], 1);
+$start_date = sprintf('%04d-%02d-%02d', $gregorian_start[0], $gregorian_start[1], $gregorian_start[2]);
 $end_date = sprintf('%04d-%02d-%02d', $gregorian_end[0], $gregorian_end[1], $gregorian_end[2]);
 
 // Get monthly purchases grouped by product
 $monthly_purchases_query = "
     SELECT
+        p.product_id,
         p.model_name,
-        SUM(pi.quantity) as total_quantity,
-        AVG(pi.buy_price) as avg_buy_price,
-        SUM(pi.quantity * pi.buy_price) as total_amount
+        SUM(pi.quantity) AS total_quantity,
+        AVG(pi.buy_price) AS avg_buy_price,
+        SUM(pi.quantity * pi.buy_price) AS total_amount
     FROM Purchases pr
     JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
     JOIN Product_Variants pv ON pi.variant_id = pv.variant_id
@@ -43,40 +45,147 @@ $monthly_purchases_query = "
     ORDER BY p.model_name
 ";
 
-$monthly_purchases = $conn->query($monthly_purchases_query);
+$monthly_purchases_result = $conn->query($monthly_purchases_query);
+
+// Prepare structured purchase data for rendering and calculations
+$monthly_purchases_data = [];
+$total_purchases = 0;
+
+if ($monthly_purchases_result && $monthly_purchases_result->num_rows > 0) {
+    while ($purchase = $monthly_purchases_result->fetch_assoc()) {
+        $product_id = (int) $purchase['product_id'];
+        $total_amount = (float) $purchase['total_amount'];
+        $total_quantity = (float) $purchase['total_quantity'];
+
+        $monthly_purchases_data[$product_id] = [
+            'product_id' => $product_id,
+            'model_name' => $purchase['model_name'],
+            'total_quantity' => $total_quantity,
+            'avg_buy_price' => (float) $purchase['avg_buy_price'],
+            'total_amount' => $total_amount,
+            'return_quantity' => 0.0,
+            'return_amount' => 0.0,
+            'net_quantity' => $total_quantity,
+            'net_amount' => $total_amount,
+        ];
+
+        $total_purchases += $total_amount;
+    }
+}
 
 // Get monthly returns (if any exist in Purchase_Returns table)
 $monthly_returns_query = "
     SELECT
+        pr.purchase_return_id,
+        pr.purchase_id,
         pr.return_date,
         pr.total_amount,
         pr.note,
-        s.name as supplier_name
+        s.name AS supplier_name
     FROM Purchase_Returns pr
     LEFT JOIN Suppliers s ON pr.supplier_id = s.supplier_id
     WHERE pr.return_date BETWEEN '$start_date' AND '$end_date'
     ORDER BY pr.return_date
 ";
 
-$monthly_returns = $conn->query($monthly_returns_query);
+$monthly_returns_result = $conn->query($monthly_returns_query);
 
-// Calculate totals
-$total_purchases = 0;
+$monthly_returns_data = [];
 $total_returns = 0;
+$return_totals_map = [];
 
-if ($monthly_purchases->num_rows > 0) {
-    $monthly_purchases->data_seek(0);
-    while ($purchase = $monthly_purchases->fetch_assoc()) {
-        $total_purchases += $purchase['total_amount'];
+if ($monthly_returns_result && $monthly_returns_result->num_rows > 0) {
+    while ($return = $monthly_returns_result->fetch_assoc()) {
+        $return['total_amount'] = (float) $return['total_amount'];
+        $monthly_returns_data[] = $return;
+        $total_returns += $return['total_amount'];
+        $return_totals_map[(int) $return['purchase_return_id']] = $return;
     }
-    $monthly_purchases->data_seek(0);
 }
 
-if ($monthly_returns->num_rows > 0) {
-    while ($return = $monthly_returns->fetch_assoc()) {
-        $total_returns += $return['total_amount'];
+// Map purchase return IDs to the total value of the original purchase for proportional allocation
+$return_purchase_totals = [];
+if (!empty($return_totals_map)) {
+    $return_purchase_totals_query = "
+        SELECT
+            pr.purchase_return_id,
+            SUM(pi.quantity * pi.buy_price) AS purchase_total
+        FROM Purchase_Returns pr
+        JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
+        WHERE pr.return_date BETWEEN '$start_date' AND '$end_date'
+        GROUP BY pr.purchase_return_id
+    ";
+
+    if ($purchase_totals_result = $conn->query($return_purchase_totals_query)) {
+        while ($row = $purchase_totals_result->fetch_assoc()) {
+            $return_purchase_totals[(int) $row['purchase_return_id']] = (float) $row['purchase_total'];
+        }
     }
-    $monthly_returns->data_seek(0);
+}
+
+// Allocate returns proportionally to products based on their contribution in the original purchase
+if (!empty($return_totals_map)) {
+    $returns_allocation_query = "
+        SELECT
+            pr.purchase_return_id,
+            p.product_id,
+            p.model_name,
+            SUM(pi.quantity) AS product_purchase_quantity,
+            SUM(pi.quantity * pi.buy_price) AS product_purchase_total
+        FROM Purchase_Returns pr
+        JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
+        JOIN Product_Variants pv ON pi.variant_id = pv.variant_id
+        JOIN Products p ON pv.product_id = p.product_id
+        WHERE pr.return_date BETWEEN '$start_date' AND '$end_date'
+        GROUP BY pr.purchase_return_id, p.product_id
+    ";
+
+    if ($returns_allocation_result = $conn->query($returns_allocation_query)) {
+        while ($allocation = $returns_allocation_result->fetch_assoc()) {
+            $return_id = (int) $allocation['purchase_return_id'];
+            $product_id = (int) $allocation['product_id'];
+            $purchase_total = $return_purchase_totals[$return_id] ?? 0.0;
+            $return_total_amount = $return_totals_map[$return_id]['total_amount'] ?? 0.0;
+            $product_purchase_total = (float) $allocation['product_purchase_total'];
+
+            if ($purchase_total <= 0 || $return_total_amount <= 0 || $product_purchase_total <= 0) {
+                continue;
+            }
+
+            $allocation_ratio = $product_purchase_total / $purchase_total;
+            $allocated_amount = $allocation_ratio * $return_total_amount;
+
+            $product_purchase_quantity = (float) $allocation['product_purchase_quantity'];
+            $average_price = $product_purchase_quantity > 0 ? $product_purchase_total / $product_purchase_quantity : 0.0;
+            $allocated_quantity = $average_price > 0 ? $allocated_amount / $average_price : 0.0;
+
+            if (!isset($monthly_purchases_data[$product_id])) {
+                $monthly_purchases_data[$product_id] = [
+                    'product_id' => $product_id,
+                    'model_name' => $allocation['model_name'],
+                    'total_quantity' => 0.0,
+                    'avg_buy_price' => 0.0,
+                    'total_amount' => 0.0,
+                    'return_quantity' => 0.0,
+                    'return_amount' => 0.0,
+                    'net_quantity' => 0.0,
+                    'net_amount' => 0.0,
+                ];
+            }
+
+            $monthly_purchases_data[$product_id]['return_quantity'] += $allocated_quantity;
+            $monthly_purchases_data[$product_id]['return_amount'] += $allocated_amount;
+        }
+    }
+}
+
+// Update net values for each product after allocating returns
+foreach ($monthly_purchases_data as $product_id => $data) {
+    $return_quantity = $data['return_quantity'] ?? 0.0;
+    $return_amount = $data['return_amount'] ?? 0.0;
+
+    $monthly_purchases_data[$product_id]['net_quantity'] = $data['total_quantity'] - $return_quantity;
+    $monthly_purchases_data[$product_id]['net_amount'] = $data['total_amount'] - $return_amount;
 }
 
 $net_total = $total_purchases - $total_returns;
@@ -93,14 +202,80 @@ $previous_debts_query = "
     ORDER BY sb.balance_year DESC, sb.balance_month DESC, s.name
 ";
 
-$previous_debts = $conn->query($previous_debts_query);
+$previous_debts_result = $conn->query($previous_debts_query);
 
-$total_previous_debts = 0;
-if ($previous_debts->num_rows > 0) {
-    while ($debt = $previous_debts->fetch_assoc()) {
+$previous_debts_data = [];
+$total_previous_debts = 0.0;
+
+if ($previous_debts_result && $previous_debts_result->num_rows > 0) {
+    while ($debt = $previous_debts_result->fetch_assoc()) {
+        $debt['closing_balance'] = (float) $debt['closing_balance'];
         $total_previous_debts += $debt['closing_balance'];
+        $previous_debts_data[] = $debt;
     }
-    $previous_debts->data_seek(0);
+}
+
+// Aggregate historical invoices for context and to highlight prior balances
+$previous_invoices_query = "
+    SELECT
+        balance_year,
+        balance_month,
+        SUM(total_purchases) AS monthly_purchases,
+        SUM(total_returns) AS monthly_returns,
+        SUM(closing_balance) AS closing_balance
+    FROM Supplier_Balances
+    WHERE (balance_year < $selected_year OR (balance_year = $selected_year AND balance_month < $selected_month))
+    GROUP BY balance_year, balance_month
+    ORDER BY balance_year DESC, balance_month DESC
+    LIMIT 12
+";
+
+$previous_invoices_result = $conn->query($previous_invoices_query);
+$previous_invoices = [];
+$historical_invoices_total = 0.0;
+
+if ($previous_invoices_result && $previous_invoices_result->num_rows > 0) {
+    while ($invoice = $previous_invoices_result->fetch_assoc()) {
+        $invoice['closing_balance'] = (float) $invoice['closing_balance'];
+        $invoice['monthly_purchases'] = (float) $invoice['monthly_purchases'];
+        $invoice['monthly_returns'] = (float) $invoice['monthly_returns'];
+        $historical_invoices_total += $invoice['closing_balance'];
+        $previous_invoices[] = $invoice;
+    }
+}
+
+// Fetch current stock per product to display live inventory status
+$product_inventory_query = "
+    SELECT
+        p.product_id,
+        SUM(pv.stock) AS total_stock
+    FROM Products p
+    LEFT JOIN Product_Variants pv ON p.product_id = pv.product_id
+    GROUP BY p.product_id
+";
+
+$product_inventory_result = $conn->query($product_inventory_query);
+$product_inventory_map = [];
+
+if ($product_inventory_result && $product_inventory_result->num_rows > 0) {
+    while ($inventory = $product_inventory_result->fetch_assoc()) {
+        $product_inventory_map[(int) $inventory['product_id']] = (int) $inventory['total_stock'];
+    }
+}
+
+foreach ($monthly_purchases_data as $product_id => $data) {
+    $monthly_purchases_data[$product_id]['current_stock'] = $product_inventory_map[$product_id] ?? 0;
+}
+
+if (!empty($monthly_purchases_data)) {
+    uasort($monthly_purchases_data, function ($a, $b) {
+        return strcmp($a['model_name'], $b['model_name']);
+    });
+}
+
+$total_current_stock = 0;
+foreach ($monthly_purchases_data as $product_data) {
+    $total_current_stock += (int) ($product_data['current_stock'] ?? 0);
 }
 
 // Generate invoice number
@@ -461,40 +636,76 @@ $invoice_number = sprintf('INV-%04d-%02d-%03d', $selected_year, $selected_month,
 
                     <!-- Invoice Details -->
                     <div class="invoice-details">
-                        <div class="grid grid-cols-2 gap-6 mb-6">
-                            <div>
-                                <h3 class="font-semibold text-gray-800 mb-2">اطلاعات دوره</h3>
-                                <p><strong>ماه:</strong> <?php echo get_jalali_month_name($selected_month); ?> <?php echo $selected_year; ?></p>
-                                <p><strong>از تاریخ:</strong> <?php echo sprintf('%04d/%02d/%02d', $selected_year, $selected_month, 1); ?></p>
-                                <p><strong>تا تاریخ:</strong> <?php echo sprintf('%04d/%02d/%02d', $selected_year, $selected_month, $selected_month <= 6 ? 31 : ($selected_month == 12 ? (is_jalali_leap_year($selected_year) ? 30 : 29) : 30)); ?></p>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                            <div class="rounded-xl border border-gray-200 bg-white shadow-sm p-5">
+                                <h3 class="font-semibold text-gray-800 mb-3">اطلاعات دوره</h3>
+                                <ul class="space-y-2 text-sm text-gray-700 leading-relaxed">
+                                    <li><strong class="text-gray-900">ماه انتخابی:</strong> <?php echo get_jalali_month_name($selected_month); ?> <?php echo $selected_year; ?></li>
+                                    <li><strong class="text-gray-900">بازه محاسبه:</strong> <?php echo sprintf('%04d/%02d/%02d', $selected_year, $selected_month, 1); ?> تا <?php echo sprintf('%04d/%02d/%02d', $selected_year, $selected_month, $selected_month_days); ?></li>
+                                    <li><strong class="text-gray-900">تعداد محصولات در گزارش:</strong> <?php echo count($monthly_purchases_data); ?> مورد</li>
+                                    <li><strong class="text-gray-900">موجودی فعلی محصولات:</strong> <?php echo number_format($total_current_stock, 0); ?> عدد</li>
+                                </ul>
                             </div>
-                            <div>
-                                <h3 class="font-semibold text-gray-800 mb-2">تاریخ صدور</h3>
-                                <p><?php echo get_current_jalali_date_string(); ?></p>
+                            <div class="rounded-xl border border-gray-200 bg-white shadow-sm p-5">
+                                <h3 class="font-semibold text-gray-800 mb-3">وضعیت مالی فاکتور</h3>
+                                <ul class="space-y-2 text-sm text-gray-700 leading-relaxed">
+                                    <li><strong class="text-gray-900">تاریخ صدور:</strong> <?php echo get_current_jalali_date_string(); ?></li>
+                                    <li><strong class="text-gray-900">شماره فاکتور:</strong> <?php echo $invoice_number; ?></li>
+                                    <li><strong class="text-gray-900">مجموع خریدها:</strong> <span class="font-semibold text-indigo-600"><?php echo number_format($total_purchases, 0); ?> تومان</span></li>
+                                    <li><strong class="text-gray-900">مجموع مرجوعی‌ها:</strong> <span class="font-semibold text-rose-600"><?php echo number_format($total_returns, 0); ?> تومان</span></li>
+                                    <li><strong class="text-gray-900">خالص خرید ماه:</strong> <span class="font-semibold text-emerald-600"><?php echo number_format($net_total, 0); ?> تومان</span></li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+                            <div class="rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 text-white p-5 shadow-lg">
+                                <p class="text-sm opacity-80">خریدهای این ماه</p>
+                                <p class="text-2xl font-bold mt-2"><?php echo number_format($total_purchases, 0); ?> تومان</p>
+                            </div>
+                            <div class="rounded-2xl bg-gradient-to-br from-red-500 to-rose-600 text-white p-5 shadow-lg">
+                                <p class="text-sm opacity-80">مرجوعی‌های این ماه</p>
+                                <p class="text-2xl font-bold mt-2"><?php echo number_format($total_returns, 0); ?> تومان</p>
+                            </div>
+                            <div class="rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-500 text-white p-5 shadow-lg">
+                                <p class="text-sm opacity-80">مجموع حساب‌های قبلی</p>
+                                <p class="text-2xl font-bold mt-2"><?php echo number_format($total_previous_debts, 0); ?> تومان</p>
+                            </div>
+                            <div class="rounded-2xl bg-gradient-to-br from-amber-500 to-orange-500 text-white p-5 shadow-lg">
+                                <p class="text-sm opacity-80">مجموع نهایی فاکتورهای قبلی</p>
+                                <p class="text-2xl font-bold mt-2"><?php echo number_format($historical_invoices_total, 0); ?> تومان</p>
                             </div>
                         </div>
 
                         <!-- Products Table -->
-                        <?php if ($monthly_purchases->num_rows > 0): ?>
-                            <h3 class="font-semibold text-gray-800 mb-4">ریز خریدهای ماه</h3>
+                        <?php if (!empty($monthly_purchases_data)): ?>
+                            <h3 class="font-semibold text-gray-800 mb-4">ریز خرید و مرجوعی محصولات</h3>
                             <table class="invoice-table">
                                 <thead>
                                     <tr>
                                         <th>نام محصول</th>
-                                        <th>تعداد کل</th>
-                                        <th>قیمت خرید (متوسط)</th>
-                                        <th>مجموع مبلغ</th>
+                                        <th>تعداد خرید</th>
+                                        <th>مبلغ خرید</th>
+                                        <th>تعداد مرجوعی</th>
+                                        <th>مبلغ مرجوعی</th>
+                                        <th>تعداد خالص</th>
+                                        <th>مبلغ خالص</th>
+                                        <th>موجودی فعلی</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <?php while ($purchase = $monthly_purchases->fetch_assoc()): ?>
+                                    <?php foreach ($monthly_purchases_data as $purchase): ?>
                                         <tr>
                                             <td class="font-medium"><?php echo htmlspecialchars($purchase['model_name'], ENT_QUOTES, 'UTF-8'); ?></td>
                                             <td><?php echo number_format($purchase['total_quantity'], 0); ?></td>
-                                            <td><?php echo number_format($purchase['avg_buy_price'], 0); ?> تومان</td>
-                                            <td class="font-medium"><?php echo number_format($purchase['total_amount'], 0); ?> تومان</td>
+                                            <td><?php echo number_format($purchase['total_amount'], 0); ?> تومان</td>
+                                            <td class="text-red-600"><?php echo number_format($purchase['return_quantity'], 0); ?></td>
+                                            <td class="text-red-600"><?php echo number_format($purchase['return_amount'], 0); ?> تومان</td>
+                                            <td class="text-emerald-600 font-semibold"><?php echo number_format($purchase['net_quantity'], 0); ?></td>
+                                            <td class="text-emerald-600 font-semibold"><?php echo number_format($purchase['net_amount'], 0); ?> تومان</td>
+                                            <td><?php echo number_format($purchase['current_stock'], 0); ?> عدد</td>
                                         </tr>
-                                    <?php endwhile; ?>
+                                    <?php endforeach; ?>
                                 </tbody>
                             </table>
                         <?php else: ?>
@@ -505,7 +716,7 @@ $invoice_number = sprintf('INV-%04d-%02d-%03d', $selected_year, $selected_month,
                         <?php endif; ?>
 
                         <!-- Returns Section -->
-                        <?php if ($monthly_returns->num_rows > 0): ?>
+                        <?php if (!empty($monthly_returns_data)): ?>
                             <div class="returns-section">
                                 <h4 class="font-semibold text-red-800 mb-3 flex items-center">
                                     <i data-feather="refresh-ccw" class="ml-2"></i>
@@ -521,26 +732,25 @@ $invoice_number = sprintf('INV-%04d-%02d-%03d', $selected_year, $selected_month,
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <?php while ($return = $monthly_returns->fetch_assoc()): ?>
+                                        <?php foreach ($monthly_returns_data as $return): ?>
                                             <tr>
                                                 <td><?php echo htmlspecialchars(convert_gregorian_to_jalali_for_display($return['return_date']), ENT_QUOTES, 'UTF-8'); ?></td>
                                                 <td><?php echo htmlspecialchars($return['supplier_name'] ?: 'تامین کننده نامشخص', ENT_QUOTES, 'UTF-8'); ?></td>
                                                 <td class="text-red-600"><?php echo number_format($return['total_amount'], 0); ?> تومان</td>
                                                 <td><?php echo htmlspecialchars($return['note'] ?: '-', ENT_QUOTES, 'UTF-8'); ?></td>
                                             </tr>
-                                        <?php endwhile; ?>
+                                        <?php endforeach; ?>
                                     </tbody>
                                 </table>
                             </div>
                         <?php endif; ?>
 
                         <!-- Previous Debts Section -->
-                        <?php if ($total_previous_debts > 0): ?>
+                        <?php if (!empty($previous_debts_data)): ?>
                             <div class="debts-section">
                                 <h4 class="font-semibold text-yellow-800 mb-3 flex items-center">
                                     <i data-feather="alert-triangle" class="ml-2"></i>
-                                    بدهی‌های ماه‌های قبلی
-                                </h4>
+                                    بدهی‌های ماه‌های قبلی</h4>
                                 <table class="invoice-table">
                                     <thead>
                                         <tr>
@@ -549,12 +759,41 @@ $invoice_number = sprintf('INV-%04d-%02d-%03d', $selected_year, $selected_month,
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <?php while ($debt = $previous_debts->fetch_assoc()): ?>
+                                        <?php foreach ($previous_debts_data as $debt): ?>
                                             <tr>
                                                 <td><?php echo htmlspecialchars($debt['supplier_name'], ENT_QUOTES, 'UTF-8'); ?></td>
                                                 <td class="text-yellow-600 font-medium"><?php echo number_format($debt['closing_balance'], 0); ?> تومان</td>
                                             </tr>
-                                        <?php endwhile; ?>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        <?php endif; ?>
+
+                        <?php if (!empty($previous_invoices)): ?>
+                            <div class="mt-6">
+                                <h4 class="font-semibold text-gray-800 mb-3 flex items-center">
+                                    <i data-feather="calendar" class="ml-2"></i>
+                                    روند فاکتورهای پیشین
+                                </h4>
+                                <table class="invoice-table">
+                                    <thead>
+                                        <tr>
+                                            <th>ماه</th>
+                                            <th>مجموع خرید</th>
+                                            <th>مجموع مرجوعی</th>
+                                            <th>مانده نهایی</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($previous_invoices as $invoice): ?>
+                                            <tr>
+                                                <td><?php echo get_jalali_month_name((int) $invoice['balance_month']); ?> <?php echo $invoice['balance_year']; ?></td>
+                                                <td><?php echo number_format($invoice['monthly_purchases'], 0); ?> تومان</td>
+                                                <td class="text-red-600"><?php echo number_format($invoice['monthly_returns'], 0); ?> تومان</td>
+                                                <td class="font-semibold"><?php echo number_format($invoice['closing_balance'], 0); ?> تومان</td>
+                                            </tr>
+                                        <?php endforeach; ?>
                                     </tbody>
                                 </table>
                             </div>
@@ -566,26 +805,26 @@ $invoice_number = sprintf('INV-%04d-%02d-%03d', $selected_year, $selected_month,
                                 <span>مجموع خریدها:</span>
                                 <span><?php echo number_format($total_purchases, 0); ?> تومان</span>
                             </div>
-                            <?php if ($total_returns > 0): ?>
-                                <div class="total-row">
-                                    <span>مجموع مرجوعی‌ها:</span>
-                                    <span>(-<?php echo number_format($total_returns, 0); ?> تومان)</span>
-                                </div>
-                            <?php endif; ?>
-                            <div class="total-row final">
+                            <div class="total-row">
+                                <span>مجموع مرجوعی‌ها:</span>
+                                <span class="text-red-600"><?php echo $total_returns > 0 ? '-' . number_format($total_returns, 0) . ' تومان' : '0 تومان'; ?></span>
+                            </div>
+                            <div class="total-row">
                                 <span>خالص خرید ماه:</span>
                                 <span><?php echo number_format($net_total, 0); ?> تومان</span>
                             </div>
-                            <?php if ($total_previous_debts > 0): ?>
-                                <div class="total-row">
-                                    <span>بدهی ماه‌های قبلی:</span>
-                                    <span><?php echo number_format($total_previous_debts, 0); ?> تومان</span>
-                                </div>
-                                <div class="total-row final">
-                                    <span>مجموع کل بدهی:</span>
-                                    <span><?php echo number_format($net_total + $total_previous_debts, 0); ?> تومان</span>
-                                </div>
-                            <?php endif; ?>
+                            <div class="total-row">
+                                <span>مانده فاکتورهای قبلی:</span>
+                                <span><?php echo number_format($total_previous_debts, 0); ?> تومان</span>
+                            </div>
+                            <div class="total-row">
+                                <span>مجموع نهایی فاکتورهای گذشته:</span>
+                                <span><?php echo number_format($historical_invoices_total, 0); ?> تومان</span>
+                            </div>
+                            <div class="total-row final">
+                                <span>مبلغ قابل پرداخت این ماه:</span>
+                                <span><?php echo number_format($net_total + $total_previous_debts, 0); ?> تومان</span>
+                            </div>
                         </div>
 
                         <!-- Invoice Footer -->
