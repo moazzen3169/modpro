@@ -21,10 +21,11 @@ if ($selected_year < 1390 || $selected_year > $current_year + 10) {
 }
 
 // Convert Jalali to Gregorian for database queries
+$selected_month_days = get_jalali_month_days($selected_year, $selected_month);
 $gregorian_start = jalali_to_gregorian($selected_year, $selected_month, 1);
-$gregorian_end = jalali_to_gregorian($selected_year, $selected_month, is_jalali_leap_year($selected_year) ? ($selected_month <= 6 ? 31 : ($selected_month == 12 ? 29 : 30)) : ($selected_month <= 6 ? 31 : ($selected_month == 12 ? 29 : 30)));
+$gregorian_end = jalali_to_gregorian($selected_year, $selected_month, $selected_month_days);
 
-$start_date = sprintf('%04d-%02d-%02d', $gregorian_start[0], $gregorian_start[1], 1);
+$start_date = sprintf('%04d-%02d-%02d', $gregorian_start[0], $gregorian_start[1], $gregorian_start[2]);
 $end_date = sprintf('%04d-%02d-%02d', $gregorian_end[0], $gregorian_end[1], $gregorian_end[2]);
 
 // Get monthly purchases grouped by product
@@ -640,7 +641,7 @@ $invoice_number = sprintf('INV-%04d-%02d-%03d', $selected_year, $selected_month,
                                 <h3 class="font-semibold text-gray-800 mb-3">اطلاعات دوره</h3>
                                 <ul class="space-y-2 text-sm text-gray-700 leading-relaxed">
                                     <li><strong class="text-gray-900">ماه انتخابی:</strong> <?php echo get_jalali_month_name($selected_month); ?> <?php echo $selected_year; ?></li>
-                                    <li><strong class="text-gray-900">بازه محاسبه:</strong> <?php echo sprintf('%04d/%02d/%02d', $selected_year, $selected_month, 1); ?> تا <?php echo sprintf('%04d/%02d/%02d', $selected_year, $selected_month, $selected_month <= 6 ? 31 : ($selected_month == 12 ? (is_jalali_leap_year($selected_year) ? 30 : 29) : 30)); ?></li>
+
                                     <li><strong class="text-gray-900">تعداد محصولات در گزارش:</strong> <?php echo count($monthly_purchases_data); ?> مورد</li>
                                     <li><strong class="text-gray-900">موجودی فعلی محصولات:</strong> <?php echo number_format($total_current_stock, 0); ?> عدد</li>
                                 </ul>

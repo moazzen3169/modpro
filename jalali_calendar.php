@@ -147,9 +147,7 @@ function is_valid_jalali_date($jy, $jm, $jd) {
         return false;
     }
 
-    $days_in_month = [31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, is_jalali_leap_year($jy) ? 30 : 29];
-
-    return $jd <= $days_in_month[$jm - 1];
+    return $jd <= get_jalali_month_days($jy, $jm);
 }
 
 /**
@@ -165,6 +163,23 @@ function is_jalali_leap_year(int $jy): bool
     }
 
     return ((($cycle + 474 + 38) * 682) % 2816) < 682;
+}
+
+/**
+ * Get total number of days in a Jalali month.
+ */
+function get_jalali_month_days(int $jy, int $jm): int
+{
+    $jy = (int) $jy;
+    $jm = (int) $jm;
+
+    $days_in_month = [31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, is_jalali_leap_year($jy) ? 30 : 29];
+
+    if ($jm < 1 || $jm > 12) {
+        throw new InvalidArgumentException('شماره ماه جلالی نامعتبر است.');
+    }
+
+    return $days_in_month[$jm - 1];
 }
 
 /**
