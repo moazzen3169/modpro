@@ -8,6 +8,34 @@ $today_sales_amount = $conn->query("SELECT SUM(si.quantity * si.sell_price) as t
 $month_sales_amount = $conn->query("SELECT SUM(si.quantity * si.sell_price) as total FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())")->fetch_assoc()['total'] ?: 0;
 $year_sales_amount = $conn->query("SELECT SUM(si.quantity * si.sell_price) as total FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE YEAR(s.sale_date) = YEAR(CURDATE())")->fetch_assoc()['total'] ?: 0;
 
+// Calculate average purchase price per variant for profit calculations
+$average_purchase_prices = $conn->query("SELECT variant_id, SUM(quantity * buy_price) / NULLIF(SUM(quantity), 0) AS avg_buy_price FROM Purchase_Items GROUP BY variant_id");
+$avg_purchase_map = [];
+if ($average_purchase_prices) {
+    while ($row = $average_purchase_prices->fetch_assoc()) {
+        $avg_purchase_map[$row['variant_id']] = (float)$row['avg_buy_price'];
+    }
+}
+
+// Helper to calculate profit based on date condition
+function calculate_profit(mysqli $conn, array $avg_purchase_map, string $where): float {
+    $query = $conn->query("SELECT si.variant_id, si.quantity, si.sell_price FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE $where");
+    if (!$query) {
+        return 0.0;
+    }
+    $profit = 0.0;
+    while ($item = $query->fetch_assoc()) {
+        $variant_id = $item['variant_id'];
+        $avg_buy_price = $avg_purchase_map[$variant_id] ?? 0;
+        $profit += $item['quantity'] * ((float)$item['sell_price'] - $avg_buy_price);
+    }
+    return $profit;
+}
+
+$today_profit_amount = calculate_profit($conn, $avg_purchase_map, "DATE(s.sale_date) = CURDATE()");
+$month_profit_amount = calculate_profit($conn, $avg_purchase_map, "MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())");
+$year_profit_amount = calculate_profit($conn, $avg_purchase_map, "YEAR(s.sale_date) = YEAR(CURDATE())");
+
 $today_sales_count = $conn->query("SELECT COUNT(DISTINCT s.sale_id) as count FROM Sales s WHERE DATE(s.sale_date) = CURDATE()")->fetch_assoc()['count'] ?: 0;
 $month_sales_count = $conn->query("SELECT COUNT(DISTINCT s.sale_id) as count FROM Sales s WHERE MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())")->fetch_assoc()['count'] ?: 0;
 $year_sales_count = $conn->query("SELECT COUNT(DISTINCT s.sale_id) as count FROM Sales s WHERE YEAR(s.sale_date) = YEAR(CURDATE())")->fetch_assoc()['count'] ?: 0;
@@ -15,8 +43,8 @@ $year_sales_count = $conn->query("SELECT COUNT(DISTINCT s.sale_id) as count FROM
 // Get best-selling products
 $best_selling = $conn->query("SELECT p.model_name, SUM(si.quantity) as total_sold FROM Products p JOIN Product_Variants pv ON p.product_id = pv.product_id JOIN Sale_Items si ON pv.variant_id = si.variant_id GROUP BY p.product_id ORDER BY total_sold DESC LIMIT 5");
 
-// Get low-stock products
-$low_stock = $conn->query("SELECT p.model_name, pv.color, pv.size, pv.stock FROM Products p JOIN Product_Variants pv ON p.product_id = pv.product_id WHERE pv.stock <= 5 ORDER BY pv.stock ASC LIMIT 10");
+// Get out-of-stock products
+$out_of_stock = $conn->query("SELECT p.model_name, pv.color, pv.size, pv.stock FROM Products p JOIN Product_Variants pv ON p.product_id = pv.product_id WHERE pv.stock = 0 ORDER BY pv.stock ASC LIMIT 10");
 
 // Get sales data for last 30 days for chart
 $sales_chart_data = [];
@@ -122,6 +150,42 @@ while ($row = $top_products_query->fetch_assoc()) {
 
                     <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 card-hover">
                         <div class="flex items-center">
+                            <div class="p-3 bg-yellow-50 rounded-lg ml-4">
+                                <i data-feather="award" class="w-6 h-6 text-yellow-500"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-sm text-gray-500">سود امروز</h3>
+                                <p class="text-xl font-bold text-gray-800"><?php echo number_format($today_profit_amount, 0); ?> تومان</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 card-hover">
+                        <div class="flex items-center">
+                            <div class="p-3 bg-lime-50 rounded-lg ml-4">
+                                <i data-feather="pie-chart" class="w-6 h-6 text-lime-500"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-sm text-gray-500">سود این ماه</h3>
+                                <p class="text-xl font-bold text-gray-800"><?php echo number_format($month_profit_amount, 0); ?> تومان</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 card-hover">
+                        <div class="flex items-center">
+                            <div class="p-3 bg-rose-50 rounded-lg ml-4">
+                                <i data-feather="bar-chart" class="w-6 h-6 text-rose-500"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-sm text-gray-500">سود امسال</h3>
+                                <p class="text-xl font-bold text-gray-800"><?php echo number_format($year_profit_amount, 0); ?> تومان</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 card-hover">
+                        <div class="flex items-center">
                             <div class="p-3 bg-indigo-50 rounded-lg ml-4">
                                 <i data-feather="shopping-bag" class="w-6 h-6 text-indigo-500"></i>
                             </div>
@@ -205,10 +269,10 @@ while ($row = $top_products_query->fetch_assoc()) {
                         </div>
                     </div>
 
-                    <!-- Low Stock Products -->
+                    <!-- Out of Stock Products -->
                     <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                         <div class="p-6 border-b border-gray-100">
-                            <h3 class="text-lg font-semibold text-gray-800">محصولات کم‌موجود</h3>
+                            <h3 class="text-lg font-semibold text-gray-800">محصولات نا موجود</h3>
                         </div>
                         <div class="overflow-x-auto">
                             <table class="w-full text-sm">
@@ -222,8 +286,8 @@ while ($row = $top_products_query->fetch_assoc()) {
                                 </thead>
                                 <tbody class="divide-y divide-gray-100">
                                     <?php
-                                    if ($low_stock->num_rows > 0) {
-                                        while($item = $low_stock->fetch_assoc()){
+                                    if ($out_of_stock->num_rows > 0) {
+                                        while($item = $out_of_stock->fetch_assoc()){
                                             $stock_class = $item['stock'] == 0 ? 'low-stock' : '';
                                             echo "<tr class='hover:bg-gray-50 {$stock_class}'>
                                                     <td class='px-6 py-4 text-gray-800'>{$item['model_name']}</td>
@@ -233,7 +297,7 @@ while ($row = $top_products_query->fetch_assoc()) {
                                                 </tr>";
                                         }
                                     } else {
-                                        echo "<tr><td colspan='4' class='px-6 py-8 text-center text-gray-500'>هیچ محصول کم‌موجودی وجود ندارد</td></tr>";
+                                        echo "<tr><td colspan='4' class='px-6 py-8 text-center text-gray-500'>هیچ محصول ناموجودی وجود ندارد</td></tr>";
                                     }
                                     ?>
                                 </tbody>
