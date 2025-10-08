@@ -571,12 +571,82 @@ $purchaseItemsStmt->close();
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">قیمت خرید</th>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">قیمت کل</th>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">تاریخ</th>
+                                <th class="px-4 py-3 text-right font-medium text-gray-700">عملیات</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-gray-100">
                             <!-- Detailed purchases will be loaded here -->
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Purchase Item Modal -->
+    <div id="editPurchaseItemModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50">
+        <div class="relative top-20 mx-auto p-5 border w-full max-w-md shadow-lg rounded-md bg-white">
+            <div class="mt-3">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">ویرایش آیتم خرید</h3>
+                    <button onclick="closeModal('editPurchaseItemModal')" class="text-gray-400 hover:text-gray-600">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <form id="editPurchaseItemForm">
+                    <input type="hidden" id="editPurchaseId" name="purchase_id">
+                    <input type="hidden" id="editVariantId" name="variant_id">
+
+                    <div class="mb-4">
+                        <label for="editQuantity" class="block text-sm font-medium text-gray-700 mb-2">تعداد</label>
+                        <input type="number" id="editQuantity" name="quantity" min="1" required
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div class="mb-4">
+                        <label for="editBuyPrice" class="block text-sm font-medium text-gray-700 mb-2">قیمت خرید (تومان)</label>
+                        <input type="number" id="editBuyPrice" name="buy_price" min="1000" step="1000" required
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div class="flex justify-end space-x-3 space-x-reverse">
+                        <button type="button" onclick="closeModal('editPurchaseItemModal')"
+                                class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400">
+                            انصراف
+                        </button>
+                        <button type="submit" class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600">
+                            بروزرسانی
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Purchase Item Modal -->
+    <div id="deletePurchaseItemModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50">
+        <div class="relative top-20 mx-auto p-5 border w-full max-w-md shadow-lg rounded-md bg-white">
+            <div class="mt-3">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">حذف آیتم خرید</h3>
+                    <button onclick="closeModal('deletePurchaseItemModal')" class="text-gray-400 hover:text-gray-600">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div class="mb-4">
+                    <p class="text-gray-700">آیا مطمئن هستید که می‌خواهید این آیتم خرید را حذف کنید؟</p>
+                    <p class="text-sm text-gray-500 mt-2">این عملیات قابل برگرداندن نیست و موجودی محصول نیز کاهش خواهد یافت.</p>
+                </div>
+                <div class="flex justify-end space-x-3 space-x-reverse">
+                    <button type="button" onclick="closeModal('deletePurchaseItemModal')"
+                            class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400">
+                        انصراف
+                    </button>
+                    <button type="button" id="confirmDeleteBtn" class="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600">
+                        حذف
+                    </button>
                 </div>
             </div>
         </div>
@@ -1093,7 +1163,7 @@ $purchaseItemsStmt->close();
                     tbody.innerHTML = '';
 
                     if (!Array.isArray(data) || data.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-3 text-center text-gray-500">هیچ رکوردی یافت نشد.</td></tr>';
+                        tbody.innerHTML = '<tr><td colspan="9" class="px-4 py-3 text-center text-gray-500">هیچ رکوردی یافت نشد.</td></tr>';
                         openModal('detailedPurchasesModal');
                         return;
                     }
@@ -1113,6 +1183,20 @@ $purchaseItemsStmt->close();
                             <td class="px-4 py-3 text-gray-800">${buyPrice} تومان</td>
                             <td class="px-4 py-3 text-gray-800">${totalAmount} تومان</td>
                             <td class="px-4 py-3 text-gray-800">${item.purchase_date}</td>
+                            <td class="px-4 py-3 text-gray-800">
+                                <div class="flex space-x-2 space-x-reverse">
+                                    <button type="button" class="px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600"
+                                            onclick="editPurchaseItem(${item.purchase_id}, ${item.variant_id}, '${item.quantity}', '${item.buy_price}')"
+                                            title="ویرایش">
+                                        <i data-feather="edit-2" class="w-3 h-3"></i>
+                                    </button>
+                                    <button type="button" class="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600"
+                                            onclick="deletePurchaseItem(${item.purchase_id}, ${item.variant_id})"
+                                            title="حذف">
+                                        <i data-feather="trash-2" class="w-3 h-3"></i>
+                                    </button>
+                                </div>
+                            </td>
                         </tr>`;
                         tbody.insertAdjacentHTML('beforeend', row);
                     });
@@ -1120,6 +1204,91 @@ $purchaseItemsStmt->close();
                 })
                 .catch(error => console.error('Error loading detailed purchases:', error));
         }
+
+        function editPurchaseItem(purchaseId, variantId, quantity, buyPrice) {
+            // Set form values for editing
+            document.getElementById('editPurchaseId').value = purchaseId;
+            document.getElementById('editVariantId').value = variantId;
+            document.getElementById('editQuantity').value = quantity;
+            document.getElementById('editBuyPrice').value = buyPrice;
+            openModal('editPurchaseItemModal');
+        }
+
+        function deletePurchaseItem(purchaseId, variantId) {
+            document.getElementById('confirmDeleteBtn').onclick = function() {
+                confirmDeletePurchaseItem(purchaseId, variantId);
+            };
+            openModal('deletePurchaseItemModal');
+        }
+
+        function confirmDeletePurchaseItem(purchaseId, variantId) {
+            fetch('delete_purchase_item.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    purchase_id: purchaseId,
+                    variant_id: variantId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    closeModal('deletePurchaseItemModal');
+                    // Refresh the detailed purchases table
+                    const activeButton = document.querySelector('[onclick*="handleShowDetailedPurchases"]');
+                    if (activeButton) {
+                        handleShowDetailedPurchases(activeButton);
+                    }
+                    alert('آیتم خرید با موفقیت حذف شد.');
+                } else {
+                    alert('خطا در حذف آیتم خرید: ' + (data.message || 'خطای نامشخص'));
+                }
+            })
+            .catch(error => {
+                console.error('Error deleting purchase item:', error);
+                alert('خطا در حذف آیتم خرید.');
+            });
+        }
+
+        // Handle edit form submission
+        document.getElementById('editPurchaseItemForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            const data = {
+                purchase_id: formData.get('purchase_id'),
+                variant_id: formData.get('variant_id'),
+                quantity: formData.get('quantity'),
+                buy_price: formData.get('buy_price')
+            };
+
+            fetch('update_purchase_item.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    closeModal('editPurchaseItemModal');
+                    // Refresh the detailed purchases table
+                    const activeButton = document.querySelector('[onclick*="handleShowDetailedPurchases"]');
+                    if (activeButton) {
+                        handleShowDetailedPurchases(activeButton);
+                    }
+                    alert('آیتم خرید با موفقیت بروزرسانی شد.');
+                } else {
+                    alert('خطا در بروزرسانی آیتم خرید: ' + (data.message || 'خطای نامشخص'));
+                }
+            })
+            .catch(error => {
+                console.error('Error updating purchase item:', error);
+                alert('خطا در بروزرسانی آیتم خرید.');
+            });
+        });
 
         // Initialize with one item and load data
         document.addEventListener('DOMContentLoaded', function() {

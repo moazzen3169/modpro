@@ -7,6 +7,8 @@ $purchase_date_input = isset($_GET['purchase_date']) ? (string) $_GET['purchase_
 $model_name = $_GET['model_name'] ?? null;
 $color = $_GET['color'] ?? null;
 $supplierId = null;
+$purchaseId = isset($_GET['purchase_id']) ? (int) $_GET['purchase_id'] : null;
+$variantId = isset($_GET['variant_id']) ? (int) $_GET['variant_id'] : null;
 
 if (isset($_GET['supplier_id']) && $_GET['supplier_id'] !== '') {
     try {
@@ -34,9 +36,32 @@ if ($purchase_date_input !== null && $purchase_date_input !== '') {
     }
 }
 
-if ($purchase_date && $model_name && $color) {
+if ($purchaseId !== null && $variantId !== null) {
+    // Handle individual purchase item query for edit functionality
     $query = "
-        SELECT pr.purchase_date, p.model_name, pv.color, pv.size, pi.quantity, pi.buy_price,
+        SELECT pr.purchase_id, pr.purchase_date, p.model_name, pv.variant_id, pv.color, pv.size, pi.quantity, pi.buy_price,
+               (pi.quantity * pi.buy_price) AS total_amount, s.name AS supplier_name
+        FROM Purchases pr
+        JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
+        JOIN Product_Variants pv ON pi.variant_id = pv.variant_id
+        JOIN Products p ON pv.product_id = p.product_id
+        JOIN Suppliers s ON pr.supplier_id = s.supplier_id
+        WHERE pr.purchase_id = ? AND pi.variant_id = ?
+    ";
+
+    $stmt = $conn->prepare($query);
+    $stmt->bind_param('ii', $purchaseId, $variantId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $data = [];
+    while ($item = $result->fetch_assoc()) {
+        $item['purchase_date'] = convert_gregorian_to_jalali_for_display((string) $item['purchase_date']);
+        $data[] = $item;
+    }
+    $stmt->close();
+} elseif ($purchase_date && $model_name && $color) {
+    $query = "
+        SELECT pr.purchase_id, pr.purchase_date, p.model_name, pv.variant_id, pv.color, pv.size, pi.quantity, pi.buy_price,
                (pi.quantity * pi.buy_price) AS total_amount, s.name AS supplier_name
         FROM Purchases pr
         JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
@@ -68,7 +93,7 @@ if ($purchase_date && $model_name && $color) {
     $stmt->close();
 } else {
     $query = "
-        SELECT pr.purchase_date, p.model_name, pv.color, pv.size, pi.quantity, pi.buy_price,
+        SELECT pr.purchase_id, pr.purchase_date, p.model_name, pv.variant_id, pv.color, pv.size, pi.quantity, pi.buy_price,
                (pi.quantity * pi.buy_price) AS total_amount, s.name AS supplier_name
         FROM Purchases pr
         JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
