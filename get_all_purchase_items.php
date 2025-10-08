@@ -39,8 +39,8 @@ if ($purchase_date_input !== null && $purchase_date_input !== '') {
 if ($purchaseId !== null && $variantId !== null) {
     // Handle individual purchase item query for edit functionality
     $query = "
-        SELECT pr.purchase_id, pr.purchase_date, p.model_name, pv.variant_id, pv.color, pv.size, pi.quantity, pi.buy_price,
-               (pi.quantity * pi.buy_price) AS total_amount, s.name AS supplier_name
+        SELECT pr.purchase_id, pr.purchase_date, pr.supplier_id, p.model_name, pv.variant_id, pv.color, pv.size,
+               pi.quantity, pi.buy_price, (pi.quantity * pi.buy_price) AS total_amount, s.name AS supplier_name
         FROM Purchases pr
         JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
         JOIN Product_Variants pv ON pi.variant_id = pv.variant_id
@@ -61,8 +61,8 @@ if ($purchaseId !== null && $variantId !== null) {
     $stmt->close();
 } elseif ($purchase_date && $model_name && $color) {
     $query = "
-        SELECT pr.purchase_id, pr.purchase_date, p.model_name, pv.variant_id, pv.color, pv.size, pi.quantity, pi.buy_price,
-               (pi.quantity * pi.buy_price) AS total_amount, s.name AS supplier_name
+        SELECT pr.purchase_id, pr.purchase_date, pr.supplier_id, p.model_name, pv.variant_id, pv.color, pv.size,
+               pi.quantity, pi.buy_price, (pi.quantity * pi.buy_price) AS total_amount, s.name AS supplier_name
         FROM Purchases pr
         JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
         JOIN Product_Variants pv ON pi.variant_id = pv.variant_id
@@ -93,8 +93,8 @@ if ($purchaseId !== null && $variantId !== null) {
     $stmt->close();
 } else {
     $query = "
-        SELECT pr.purchase_id, pr.purchase_date, p.model_name, pv.variant_id, pv.color, pv.size, pi.quantity, pi.buy_price,
-               (pi.quantity * pi.buy_price) AS total_amount, s.name AS supplier_name
+        SELECT pr.purchase_id, pr.purchase_date, pr.supplier_id, p.model_name, pv.variant_id, pv.color, pv.size,
+               pi.quantity, pi.buy_price, (pi.quantity * pi.buy_price) AS total_amount, s.name AS supplier_name
         FROM Purchases pr
         JOIN Purchase_Items pi ON pr.purchase_id = pi.purchase_id
         JOIN Product_Variants pv ON pi.variant_id = pv.variant_id

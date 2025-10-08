@@ -356,10 +356,30 @@ $purchaseItemsStmt->close();
 
             <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
                 <div class="p-6 border-b border-gray-100">
-                    <h3 class="text-lg font-semibold text-gray-800">همه ردیف های محصولات خرید</h3>
+                    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                        <div>
+                            <h3 class="text-lg font-semibold text-gray-800">همه ردیف های محصولات خرید</h3>
+                            <p class="text-sm text-gray-500 mt-2">از نوار جستجو می‌توانید ردیف‌های جدول را بر اساس نام محصول، تامین‌کننده، رنگ یا تاریخ فیلتر کنید.</p>
+                        </div>
+                        <div class="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center w-full lg:w-auto">
+                            <div class="relative flex-1 sm:w-72">
+                                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                                    <i data-feather="search" class="w-4 h-4"></i>
+                                </span>
+                                <input type="search" id="purchaseTableSearch"
+                                       class="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                       placeholder="جستجو در تامین‌کننده، محصول، رنگ یا تاریخ">
+                            </div>
+                            <button type="button" onclick="exportPurchaseSummaryToCSV()"
+                                    class="flex items-center justify-center px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all duration-200 shadow-sm">
+                                <i data-feather="download" class="ml-2 w-4 h-4"></i>
+                                خروجی CSV
+                            </button>
+                        </div>
+                    </div>
                 </div>
                 <div class="overflow-x-auto">
-                    <table class="w-full text-sm">
+                    <table id="purchaseSummaryTable" class="w-full text-sm">
                         <thead class="bg-gray-50">
                             <tr>
                                 <th class="px-4 py-3 text-right font-medium text-gray-700">تامین‌کننده</th>
@@ -380,7 +400,7 @@ $purchaseItemsStmt->close();
                                         $purchase_date_display = htmlspecialchars(convert_gregorian_to_jalali_for_display((string) $item['purchase_date']), ENT_QUOTES, 'UTF-8');
                                         $supplier_name = htmlspecialchars($item['supplier_name'] ?? 'نامشخص', ENT_QUOTES, 'UTF-8');
                                     ?>
-                                    <tr>
+                                    <tr data-row="purchase-summary">
                                         <td class="px-4 py-3 text-gray-800"><?php echo $supplier_name; ?></td>
                                         <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['model_name'], ENT_QUOTES, 'UTF-8'); ?></td>
                                         <td class="px-4 py-3 text-gray-800"><?php echo htmlspecialchars($item['color'], ENT_QUOTES, 'UTF-8'); ?></td>
@@ -402,8 +422,13 @@ $purchaseItemsStmt->close();
                                         </td>
                                     </tr>
                                 <?php endwhile; ?>
+                                <tr id="purchaseSummaryEmptyRow" data-empty="true" class="hidden">
+                                    <td colspan="9" class="px-4 py-6 text-center text-gray-500">
+                                        هیچ ردیفی مطابق جستجو یافت نشد.
+                                    </td>
+                                </tr>
                             <?php else: ?>
-                                <tr>
+                                <tr id="purchaseSummaryEmptyRow" data-empty="true">
                                     <td colspan="9" class="px-4 py-6 text-center text-gray-500">
                                         هیچ خریدی برای نمایش وجود ندارد.
                                     </td>
@@ -599,22 +624,77 @@ $purchaseItemsStmt->close();
                     <input type="hidden" id="editPurchaseId" name="purchase_id">
                     <input type="hidden" id="editVariantId" name="variant_id">
 
-                    <div class="mb-4">
-                        <label for="editQuantity" class="block text-sm font-medium text-gray-700 mb-2">تعداد</label>
-                        <input type="number" id="editQuantity" name="quantity" min="1" required
-                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <div id="editPurchaseFormAlert" class="hidden mb-4 text-sm font-medium"></div>
+
+                    <div class="space-y-4">
+                        <div>
+                            <label for="editProductName" class="block text-sm font-medium text-gray-700 mb-2">نام محصول</label>
+                            <input type="text" id="editProductName" name="product_name" list="productNames" required
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                   placeholder="نام محصول را وارد کنید">
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label for="editColor" class="block text-sm font-medium text-gray-700 mb-2">رنگ</label>
+                                <input type="text" id="editColor" name="color" list="colorNames" required
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                       placeholder="رنگ محصول">
+                            </div>
+                            <div>
+                                <label for="editSize" class="block text-sm font-medium text-gray-700 mb-2">سایز</label>
+                                <input type="text" id="editSize" name="size" required
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                       placeholder="مثال: 40 یا L">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label for="editPurchaseDate" class="block text-sm font-medium text-gray-700 mb-2">تاریخ خرید (جلالی)</label>
+                            <input type="text" id="editPurchaseDate" name="purchase_date" required
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                   placeholder="1402/01/15" pattern="\d{4}/\d{2}/\d{2}">
+                            <p class="text-xs text-gray-500 mt-1">قالب تاریخ باید به صورت YYYY/MM/DD باشد.</p>
+                        </div>
+
+                        <div>
+                            <label for="editSupplierId" class="block text-sm font-medium text-gray-700 mb-2">تامین‌کننده</label>
+                            <select id="editSupplierId" name="supplier_id" required
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <?php foreach ($suppliers as $supplier): ?>
+                                    <option value="<?php echo (int) $supplier['supplier_id']; ?>">
+                                        <?php echo htmlspecialchars($supplier['name'], ENT_QUOTES, 'UTF-8'); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label for="editQuantity" class="block text-sm font-medium text-gray-700 mb-2">تعداد</label>
+                                <input type="number" id="editQuantity" name="quantity" min="1" required
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label for="editBuyPrice" class="block text-sm font-medium text-gray-700 mb-2">قیمت خرید (تومان)</label>
+                                <input type="number" id="editBuyPrice" name="buy_price" min="1000" step="1000" required
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                        </div>
+
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-sm flex items-center justify-between">
+                            <span class="text-blue-800 font-medium">جمع مبلغ این آیتم</span>
+                            <span id="editPurchaseTotals" class="text-blue-700 font-semibold">0 تومان</span>
+                        </div>
                     </div>
-                    <div class="mb-4">
-                        <label for="editBuyPrice" class="block text-sm font-medium text-gray-700 mb-2">قیمت خرید (تومان)</label>
-                        <input type="number" id="editBuyPrice" name="buy_price" min="1000" step="1000" required
-                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    </div>
-                    <div class="flex justify-end space-x-3 space-x-reverse">
+
+                    <div class="flex justify-end space-x-3 space-x-reverse mt-6">
                         <button type="button" onclick="closeModal('editPurchaseItemModal')"
-                                class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400">
+                                class="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors">
                             انصراف
                         </button>
-                        <button type="submit" class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600">
+                        <button type="submit" id="editPurchaseSubmitBtn"
+                                class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors">
                             بروزرسانی
                         </button>
                     </div>
@@ -654,6 +734,55 @@ $purchaseItemsStmt->close();
 
     <script>
         feather.replace();
+
+        const numberFormatter = new Intl.NumberFormat('fa-IR');
+        let activeDetailTrigger = null;
+
+        const editForm = document.getElementById('editPurchaseItemForm');
+        const editQuantityInput = document.getElementById('editQuantity');
+        const editBuyPriceInput = document.getElementById('editBuyPrice');
+        const editTotalsElement = document.getElementById('editPurchaseTotals');
+        const editSubmitBtn = document.getElementById('editPurchaseSubmitBtn');
+        const editFormAlert = document.getElementById('editPurchaseFormAlert');
+        const purchaseTableSearchInput = document.getElementById('purchaseTableSearch');
+
+        function setEditFormMessage(message = '', type = 'info') {
+            if (!editFormAlert) {
+                return;
+            }
+
+            if (!message) {
+                editFormAlert.className = 'hidden mb-4 text-sm font-medium';
+                editFormAlert.textContent = '';
+                return;
+            }
+
+            const baseClasses = 'mb-4 text-sm font-medium px-3 py-2 rounded-lg border';
+            const variants = {
+                info: 'bg-blue-50 text-blue-700 border-blue-200',
+                success: 'bg-green-50 text-green-700 border-green-200',
+                error: 'bg-red-50 text-red-700 border-red-200'
+            };
+
+            editFormAlert.className = `${baseClasses} ${variants[type] ?? variants.info}`;
+            editFormAlert.textContent = message;
+        }
+
+        function updateEditTotals() {
+            if (!editTotalsElement) {
+                return;
+            }
+            const quantity = parseFloat(editQuantityInput?.value || '0');
+            const price = parseFloat(editBuyPriceInput?.value || '0');
+            const total = Number.isFinite(quantity * price) ? quantity * price : 0;
+            editTotalsElement.textContent = `${numberFormatter.format(Math.max(total, 0))} تومان`;
+        }
+
+        editQuantityInput?.addEventListener('input', updateEditTotals);
+        editBuyPriceInput?.addEventListener('input', updateEditTotals);
+        purchaseTableSearchInput?.addEventListener('input', event => {
+            filterPurchaseSummaryRows(event.target.value);
+        });
 
         function toggleDetails(id) {
             const summary = document.getElementById('month-summary-' + id);
@@ -1139,18 +1268,21 @@ $purchaseItemsStmt->close();
             }
         }
 
-        const numberFormatter = new Intl.NumberFormat('fa-IR');
-
         function handleShowDetailedPurchases(button) {
             const purchaseDate = button.getAttribute('data-purchase-date') || '';
             const modelName = button.getAttribute('data-model-name') || '';
             const color = button.getAttribute('data-color') || '';
             const supplierId = button.getAttribute('data-supplier-id') || '';
 
-            showDetailedPurchases(purchaseDate, modelName, color, supplierId);
+            showDetailedPurchases(button, purchaseDate, modelName, color, supplierId);
         }
 
-        function showDetailedPurchases(purchaseDate, modelName, color, supplierId) {
+        function showDetailedPurchases(button, purchaseDate, modelName, color, supplierId) {
+            activeDetailTrigger = button || activeDetailTrigger;
+            const tbody = document.getElementById('detailedPurchasesTable').querySelector('tbody');
+            tbody.innerHTML = '<tr><td colspan="9" class="px-4 py-3 text-center text-gray-500">در حال بارگذاری اطلاعات...</td></tr>';
+            openModal('detailedPurchasesModal');
+
             let url = `get_all_purchase_items.php?purchase_date=${encodeURIComponent(purchaseDate)}&model_name=${encodeURIComponent(modelName)}&color=${encodeURIComponent(color)}`;
             if (supplierId) {
                 url += `&supplier_id=${encodeURIComponent(supplierId)}`;
@@ -1159,12 +1291,10 @@ $purchaseItemsStmt->close();
             fetch(url)
                 .then(response => response.json())
                 .then(data => {
-                    const tbody = document.getElementById('detailedPurchasesTable').querySelector('tbody');
                     tbody.innerHTML = '';
 
                     if (!Array.isArray(data) || data.length === 0) {
                         tbody.innerHTML = '<tr><td colspan="9" class="px-4 py-3 text-center text-gray-500">هیچ رکوردی یافت نشد.</td></tr>';
-                        openModal('detailedPurchasesModal');
                         return;
                     }
 
@@ -1186,7 +1316,7 @@ $purchaseItemsStmt->close();
                             <td class="px-4 py-3 text-gray-800">
                                 <div class="flex space-x-2 space-x-reverse">
                                     <button type="button" class="px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600"
-                                            onclick="editPurchaseItem(${item.purchase_id}, ${item.variant_id}, '${item.quantity}', '${item.buy_price}')"
+                                            onclick="loadPurchaseItemForEdit(${item.purchase_id}, ${item.variant_id})"
                                             title="ویرایش">
                                         <i data-feather="edit-2" class="w-3 h-3"></i>
                                     </button>
@@ -1200,18 +1330,164 @@ $purchaseItemsStmt->close();
                         </tr>`;
                         tbody.insertAdjacentHTML('beforeend', row);
                     });
-                    openModal('detailedPurchasesModal');
+                    feather.replace();
                 })
                 .catch(error => console.error('Error loading detailed purchases:', error));
         }
 
-        function editPurchaseItem(purchaseId, variantId, quantity, buyPrice) {
-            // Set form values for editing
+        function loadPurchaseItemForEdit(purchaseId, variantId) {
+            if (!editForm) {
+                return;
+            }
+
+            editForm.reset();
             document.getElementById('editPurchaseId').value = purchaseId;
             document.getElementById('editVariantId').value = variantId;
-            document.getElementById('editQuantity').value = quantity;
-            document.getElementById('editBuyPrice').value = buyPrice;
+            setEditFormMessage('در حال بارگذاری اطلاعات آیتم...', 'info');
+            editSubmitBtn?.classList.add('opacity-60', 'cursor-not-allowed');
+            if (editSubmitBtn) {
+                editSubmitBtn.disabled = true;
+            }
+            updateEditTotals();
+
             openModal('editPurchaseItemModal');
+
+            fetch(`get_all_purchase_items.php?purchase_id=${encodeURIComponent(purchaseId)}&variant_id=${encodeURIComponent(variantId)}`)
+                .then(response => response.json())
+                .then(data => {
+                    const item = Array.isArray(data) && data.length > 0 ? data[0] : null;
+                    if (!item) {
+                        setEditFormMessage('آیتم خرید موردنظر یافت نشد.', 'error');
+                        return;
+                    }
+
+                    const productNameInput = document.getElementById('editProductName');
+                    const colorInput = document.getElementById('editColor');
+                    const sizeInput = document.getElementById('editSize');
+                    const purchaseDateInput = document.getElementById('editPurchaseDate');
+                    const supplierSelect = document.getElementById('editSupplierId');
+
+                    if (productNameInput) {
+                        productNameInput.value = item.model_name || '';
+                    }
+                    if (colorInput) {
+                        colorInput.value = item.color || '';
+                    }
+                    if (sizeInput) {
+                        sizeInput.value = item.size || '';
+                    }
+                    if (purchaseDateInput) {
+                        purchaseDateInput.value = item.purchase_date || '';
+                    }
+                    if (supplierSelect) {
+                        const supplierIdValue = item.supplier_id || '';
+                        const optionExists = Array.from(supplierSelect.options).some(option => option.value === String(supplierIdValue));
+                        if (!optionExists && supplierIdValue) {
+                            const option = document.createElement('option');
+                            option.value = supplierIdValue;
+                            option.textContent = item.supplier_name || `تامین‌کننده #${supplierIdValue}`;
+                            supplierSelect.appendChild(option);
+                        }
+                        supplierSelect.value = supplierIdValue;
+                    }
+                    if (editQuantityInput) {
+                        editQuantityInput.value = item.quantity || '';
+                    }
+                    if (editBuyPriceInput) {
+                        editBuyPriceInput.value = item.buy_price || '';
+                    }
+
+                    setEditFormMessage('', 'info');
+                    if (editSubmitBtn) {
+                        editSubmitBtn.disabled = false;
+                        editSubmitBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+                    }
+                    updateEditTotals();
+                })
+                .catch(error => {
+                    console.error('Error loading purchase item for edit:', error);
+                    setEditFormMessage('خطا در بارگذاری اطلاعات آیتم.', 'error');
+                });
+        }
+
+        function filterPurchaseSummaryRows(query) {
+            const table = document.getElementById('purchaseSummaryTable');
+            if (!table) {
+                return;
+            }
+
+            const dataRows = Array.from(table.querySelectorAll('tbody tr[data-row="purchase-summary"]'));
+            const emptyRow = document.getElementById('purchaseSummaryEmptyRow');
+
+            if (dataRows.length === 0) {
+                if (emptyRow) {
+                    emptyRow.classList.remove('hidden');
+                    emptyRow.querySelector('td').textContent = 'هیچ خریدی برای نمایش وجود ندارد.';
+                }
+                return;
+            }
+
+            const normalized = (query || '').trim().toLowerCase();
+            let visibleCount = 0;
+
+            dataRows.forEach(row => {
+                const text = row.textContent.toLowerCase();
+                const matches = normalized === '' || text.includes(normalized);
+                row.classList.toggle('hidden', !matches);
+                if (matches) {
+                    visibleCount++;
+                }
+            });
+
+            if (emptyRow) {
+                if (visibleCount === 0) {
+                    emptyRow.classList.remove('hidden');
+                    emptyRow.querySelector('td').textContent = normalized === ''
+                        ? 'هیچ خریدی برای نمایش وجود ندارد.'
+                        : 'هیچ ردیفی مطابق جستجو یافت نشد.';
+                } else {
+                    emptyRow.classList.add('hidden');
+                }
+            }
+        }
+
+        function exportPurchaseSummaryToCSV() {
+            const table = document.getElementById('purchaseSummaryTable');
+            if (!table) {
+                return;
+            }
+
+            const visibleRows = Array.from(table.querySelectorAll('tbody tr[data-row="purchase-summary"]')).filter(row => !row.classList.contains('hidden'));
+            if (visibleRows.length === 0) {
+                alert('ردیفی برای خروجی گرفتن وجود ندارد.');
+                return;
+            }
+
+            const headerRow = table.querySelector('thead tr');
+            if (!headerRow) {
+                return;
+            }
+
+            const csvRows = [];
+            const headerValues = Array.from(headerRow.querySelectorAll('th')).map(cell => `"${cell.textContent.trim().replace(/"/g, '""')}"`);
+            csvRows.push(headerValues.join(','));
+
+            visibleRows.forEach(row => {
+                const values = Array.from(row.querySelectorAll('td')).map(cell => `"${cell.textContent.trim().replace(/"/g, '""')}"`);
+                csvRows.push(values.join(','));
+            });
+
+            const csvContent = '\uFEFF' + csvRows.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+            link.href = url;
+            link.download = `purchases-${timestamp}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
         }
 
         function deletePurchaseItem(purchaseId, variantId) {
@@ -1236,12 +1512,11 @@ $purchaseItemsStmt->close();
             .then(data => {
                 if (data.success) {
                     closeModal('deletePurchaseItemModal');
-                    // Refresh the detailed purchases table
-                    const activeButton = document.querySelector('[onclick*="handleShowDetailedPurchases"]');
-                    if (activeButton) {
-                        handleShowDetailedPurchases(activeButton);
+                    if (activeDetailTrigger) {
+                        handleShowDetailedPurchases(activeDetailTrigger);
                     }
                     alert('آیتم خرید با موفقیت حذف شد.');
+                    window.location.reload();
                 } else {
                     alert('خطا در حذف آیتم خرید: ' + (data.message || 'خطای نامشخص'));
                 }
@@ -1253,46 +1528,64 @@ $purchaseItemsStmt->close();
         }
 
         // Handle edit form submission
-        document.getElementById('editPurchaseItemForm').addEventListener('submit', function(e) {
+        editForm?.addEventListener('submit', function(e) {
             e.preventDefault();
             const formData = new FormData(this);
-            const data = {
+            const payload = {
                 purchase_id: formData.get('purchase_id'),
                 variant_id: formData.get('variant_id'),
                 quantity: formData.get('quantity'),
-                buy_price: formData.get('buy_price')
+                buy_price: formData.get('buy_price'),
+                product_name: (formData.get('product_name') || '').trim(),
+                color: (formData.get('color') || '').trim(),
+                size: (formData.get('size') || '').trim(),
+                purchase_date: (formData.get('purchase_date') || '').trim(),
+                supplier_id: formData.get('supplier_id')
             };
+
+            setEditFormMessage('در حال بروزرسانی آیتم...', 'info');
+            if (editSubmitBtn) {
+                editSubmitBtn.disabled = true;
+                editSubmitBtn.classList.add('opacity-60', 'cursor-not-allowed');
+            }
 
             fetch('update_purchase_item.php', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(data)
+                body: JSON.stringify(payload)
             })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
                     closeModal('editPurchaseItemModal');
-                    // Refresh the detailed purchases table
-                    const activeButton = document.querySelector('[onclick*="handleShowDetailedPurchases"]');
-                    if (activeButton) {
-                        handleShowDetailedPurchases(activeButton);
-                    }
                     alert('آیتم خرید با موفقیت بروزرسانی شد.');
+                    if (activeDetailTrigger) {
+                        handleShowDetailedPurchases(activeDetailTrigger);
+                    }
+                    window.location.reload();
                 } else {
-                    alert('خطا در بروزرسانی آیتم خرید: ' + (data.message || 'خطای نامشخص'));
+                    setEditFormMessage(data.message || 'خطا در بروزرسانی آیتم خرید.', 'error');
                 }
             })
             .catch(error => {
                 console.error('Error updating purchase item:', error);
-                alert('خطا در بروزرسانی آیتم خرید.');
+                setEditFormMessage('خطا در بروزرسانی آیتم خرید.', 'error');
+            })
+            .finally(() => {
+                if (editSubmitBtn) {
+                    editSubmitBtn.disabled = false;
+                    editSubmitBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+                }
             });
         });
 
         // Initialize with one item and load data
         document.addEventListener('DOMContentLoaded', function() {
             addPurchaseItem();
+            filterPurchaseSummaryRows(purchaseTableSearchInput?.value || '');
+            updateEditTotals();
             // Load product names
             fetch('get_product_names.php')
                 .then(response => response.json())
