@@ -12,14 +12,18 @@ if (!isset($_GET['variant_id']) || !is_numeric($_GET['variant_id'])) {
 $variantId = (int) $_GET['variant_id'];
 
 try {
-    $stmt = $conn->prepare("SELECT buy_price FROM Product_Variants WHERE variant_id = ?");
+    $stmt = $conn->prepare("SELECT price FROM Product_Variants WHERE variant_id = ?");
     $stmt->bind_param('i', $variantId);
     $stmt->execute();
     $result = $stmt->get_result();
     $row = $result->fetch_assoc();
 
     if ($row) {
-        echo json_encode(['buy_price' => (float) $row['buy_price']]);
+        $price = (float) $row['price'];
+        echo json_encode([
+            'price' => $price,
+            'buy_price' => $price,
+        ]);
     } else {
         http_response_code(404);
         echo json_encode(['error' => 'Variant not found']);
