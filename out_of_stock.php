@@ -1,6 +1,68 @@
 <?php
 require_once __DIR__ . '/env/bootstrap.php';
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? '';
+
+    if ($action === 'purge_purchased_products') {
+        $password = (string) ($_POST['confirm_password'] ?? '');
+        $credentials = require __DIR__ . '/env/auth.php';
+
+        if (!password_verify($password, $credentials['password_hash'])) {
+            redirect_with_message('out_of_stock.php', 'error', 'رمز عبور وارد شده صحیح نیست.');
+        }
+
+        try {
+            $conn->begin_transaction();
+
+            $totalsResult = $conn->query('SELECT variant_id, SUM(quantity) AS total_qty FROM Purchase_Items GROUP BY variant_id');
+            if ($totalsResult === false) {
+                throw new RuntimeException('خطا در خواندن اطلاعات خریدها.');
+            }
+
+            $updateStmt = $conn->prepare('UPDATE Product_Variants SET stock = GREATEST(stock - ?, 0) WHERE variant_id = ?');
+            if ($updateStmt === false) {
+                throw new RuntimeException('خطا در آماده‌سازی به‌روزرسانی موجودی.');
+            }
+
+            if ($totalsResult instanceof mysqli_result) {
+                while ($row = $totalsResult->fetch_assoc()) {
+                    $variantId = (int) ($row['variant_id'] ?? 0);
+                    $totalQty = (int) ($row['total_qty'] ?? 0);
+
+                    if ($variantId <= 0 || $totalQty <= 0) {
+                        continue;
+                    }
+
+                    $updateStmt->bind_param('ii', $totalQty, $variantId);
+                    if (!$updateStmt->execute()) {
+                        throw new RuntimeException('خطا در به‌روزرسانی موجودی.');
+                    }
+                }
+
+                $totalsResult->free();
+            }
+
+            $updateStmt->close();
+
+            if ($conn->query('DELETE FROM Purchase_Items') === false) {
+                throw new RuntimeException('خطا در حذف اقلام خرید.');
+            }
+
+            if ($conn->query('DELETE FROM Purchases') === false) {
+                throw new RuntimeException('خطا در حذف فاکتورهای خرید.');
+            }
+
+            $conn->commit();
+
+            redirect_with_message('out_of_stock.php', 'success', 'تمام محصولات خریداری شده حذف شدند و موجودی به‌روزرسانی شد.');
+        } catch (Throwable $e) {
+            $conn->rollback();
+            redirect_with_message('out_of_stock.php', 'error', normalize_error_message($e));
+        }
+    }
+}
+
 $flash_messages = get_flash_messages();
 
 $outOfStockQuery = "
@@ -77,6 +139,8 @@ if (!empty($colorStats)) {
     $topColorName = array_key_first($colorStats);
     $topColorCount = $colorStats[$topColorName];
 }
+
+$hasOutOfStock = count($outOfStockProducts) > 0;
 ?>
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -184,6 +248,58 @@ if (!empty($colorStats)) {
             background-color: #fff;
             box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08);
         }
+
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background-color: rgba(15, 23, 42, 0.55);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+
+        .modal-card {
+            width: min(100%, 960px);
+            background-color: #ffffff;
+            border-radius: 1rem;
+            box-shadow: 0 20px 45px rgba(15, 23, 42, 0.25);
+            display: flex;
+            flex-direction: column;
+            max-height: 90vh;
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+            overflow: auto;
+        }
+
+        .print-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+
+        .print-table th,
+        .print-table td {
+            border: 1px solid #e2e8f0;
+            padding: 0.75rem 0.85rem;
+            text-align: right;
+        }
+
+        .print-table thead th {
+            background-color: #f8fafc;
+            font-weight: 700;
+            color: #0f172a;
+        }
+
+        .print-table tbody tr:nth-child(even) {
+            background-color: #f1f5f9;
+        }
+
+        .print-table tbody tr:hover {
+            background-color: #e2e8f0;
+        }
     </style>
 </head>
 <body class="bg-gray-50">
@@ -214,6 +330,14 @@ if (!empty($colorStats)) {
                     <button id="exportCsv" class="flex items-center px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-all duration-200 shadow-sm hover:shadow-md">
                         <i data-feather="download" class="ml-2"></i>
                         خروجی CSV
+                    </button>
+                    <button type="button" id="openPrintModal" data-open-modal="print" class="flex items-center px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-all duration-200 shadow-sm hover:shadow-md<?php echo $hasOutOfStock ? '' : ' opacity-60 cursor-not-allowed'; ?>"<?php echo $hasOutOfStock ? '' : ' disabled'; ?>>
+                        <i data-feather="printer" class="ml-2"></i>
+                        پرینت ناموجودها
+                    </button>
+                    <button type="button" id="openPurgeModal" data-open-modal="purge" class="flex items-center px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all duration-200 shadow-sm hover:shadow-md">
+                        <i data-feather="trash-2" class="ml-2"></i>
+                        حذف کل محصولات خریده شده
                     </button>
                     <a href="products.php" class="flex items-center px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all duration-200 shadow-sm hover:shadow-md">
                         <i data-feather="package" class="ml-2"></i>
@@ -397,6 +521,124 @@ if (!empty($colorStats)) {
         </div>
     </div>
 
+    <div id="printModal" class="modal-overlay hidden" data-modal aria-hidden="true">
+        <div class="modal-card">
+            <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-900">پرینت لیست محصولات ناموجود</h3>
+                    <p class="mt-1 text-sm text-gray-500">گزارش حاضر بر اساس آخرین اطلاعات موجودی تهیه شده است.</p>
+                </div>
+                <button type="button" class="p-2 rounded-full hover:bg-gray-100" data-close-modal>
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="modal-body custom-scrollbar">
+                <div class="overflow-x-auto">
+                    <table id="printTable" class="print-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">مدل محصول</th>
+                                <th scope="col">دسته‌بندی</th>
+                                <th scope="col">رنگ</th>
+                                <th scope="col">سایزهای ناموجود</th>
+                                <th scope="col">تعداد سایز</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (!$hasOutOfStock): ?>
+                                <tr>
+                                    <td colspan="5" class="text-center text-gray-500 py-6">در حال حاضر محصول ناموجودی ثبت نشده است.</td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($outOfStockProducts as $product): ?>
+                                    <?php $colorCount = max(count($product['colors']), 1); ?>
+                                    <?php if (!empty($product['colors'])): ?>
+                                        <?php $isFirstColor = true; ?>
+                                        <?php foreach ($product['colors'] as $colorName => $colorData): ?>
+                                            <tr>
+                                                <?php if ($isFirstColor): ?>
+                                                    <td rowspan="<?php echo $colorCount; ?>" class="align-top font-semibold text-gray-800">
+                                                        <?php echo htmlspecialchars($product['model_name'], ENT_QUOTES, 'UTF-8'); ?>
+                                                    </td>
+                                                    <td rowspan="<?php echo $colorCount; ?>" class="align-top text-gray-600">
+                                                        <?php echo htmlspecialchars($product['category'], ENT_QUOTES, 'UTF-8'); ?>
+                                                    </td>
+                                                <?php endif; ?>
+                                                <td class="text-gray-700">
+                                                    <?php echo htmlspecialchars($colorName, ENT_QUOTES, 'UTF-8'); ?>
+                                                </td>
+                                                <td class="text-gray-600">
+                                                    <?php echo htmlspecialchars(implode('، ', $colorData['sizes']), ENT_QUOTES, 'UTF-8'); ?>
+                                                </td>
+                                                <td class="text-gray-700 font-medium text-center">
+                                                    <?php echo count($colorData['sizes']); ?>
+                                                </td>
+                                            </tr>
+                                            <?php $isFirstColor = false; ?>
+                                        <?php endforeach; ?>
+                                    <?php else: ?>
+                                        <tr>
+                                            <td class="align-top font-semibold text-gray-800">
+                                                <?php echo htmlspecialchars($product['model_name'], ENT_QUOTES, 'UTF-8'); ?>
+                                            </td>
+                                            <td class="align-top text-gray-600">
+                                                <?php echo htmlspecialchars($product['category'], ENT_QUOTES, 'UTF-8'); ?>
+                                            </td>
+                                            <td class="text-gray-500">-</td>
+                                            <td class="text-gray-500">-</td>
+                                            <td class="text-center text-gray-500">0</td>
+                                        </tr>
+                                    <?php endif; ?>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3 bg-gray-50">
+                <button type="button" class="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 transition" data-close-modal>بستن</button>
+                <button type="button" id="printModalPrint" class="px-4 py-2 rounded-lg bg-indigo-500 text-white hover:bg-indigo-600 transition flex items-center gap-2">
+                    <i data-feather="printer"></i>
+                    چاپ جدول
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="purgePurchasesModal" class="modal-overlay hidden" data-modal aria-hidden="true">
+        <form method="post" class="modal-card" autocomplete="off">
+            <input type="hidden" name="action" value="purge_purchased_products">
+            <div class="px-6 py-4 border-b border-gray-100">
+                <h3 class="text-lg font-semibold text-gray-900">حذف کل محصولات خریده شده</h3>
+                <p class="mt-2 text-sm text-red-600 flex items-center gap-2">
+                    <i data-feather="alert-triangle" class="w-4 h-4"></i>
+                    با انجام این عملیات تمامی خریدهای ثبت شده حذف می‌شوند و موجودی به حالت قبل بازگردانده خواهد شد. این عملیات غیرقابل بازگشت است.
+                </p>
+            </div>
+            <div class="modal-body custom-scrollbar space-y-4">
+                <div>
+                    <label for="confirm_password" class="block text-sm font-medium text-gray-700 mb-2">رمز عبور خود را وارد کنید</label>
+                    <input type="password" id="confirm_password" name="confirm_password" class="w-full border border-gray-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500" required>
+                </div>
+                <div class="bg-red-50 border border-red-100 text-sm text-red-700 rounded-lg p-4 leading-6">
+                    <p class="font-semibold mb-1">هشدار:</p>
+                    <ul class="list-disc pr-5 space-y-1">
+                        <li>تمامی فاکتورهای خرید و اقلام مرتبط برای همیشه حذف می‌شوند.</li>
+                        <li>موجودی محصولات به میزان خریدهای ثبت شده کاهش می‌یابد.</li>
+                        <li>این عملیات ممکن است بسته به حجم داده‌ها چند لحظه زمان ببرد.</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-100 bg-gray-50 flex items-center justify-end gap-3">
+                <button type="button" class="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 transition" data-close-modal>انصراف</button>
+                <button type="submit" class="px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 transition flex items-center gap-2">
+                    <i data-feather="trash-2"></i>
+                    تایید و حذف
+                </button>
+            </div>
+        </form>
+    </div>
+
     <script>
         feather.replace();
 
@@ -409,6 +651,113 @@ if (!empty($colorStats)) {
         const noResults = document.getElementById('noResults');
         const productsContainer = document.getElementById('productsContainer');
         const exportButton = document.getElementById('exportCsv');
+        const body = document.body;
+        const modalLookup = {
+            print: document.getElementById('printModal'),
+            purge: document.getElementById('purgePurchasesModal'),
+        };
+
+        function anyModalOpen() {
+            return Object.values(modalLookup).some((modal) => modal && !modal.classList.contains('hidden'));
+        }
+
+        function openModalByKey(key) {
+            const modal = modalLookup[key];
+            if (!modal) {
+                return;
+            }
+
+            modal.classList.remove('hidden');
+            modal.setAttribute('aria-hidden', 'false');
+            body.classList.add('overflow-hidden');
+        }
+
+        function closeModal(modal) {
+            if (!modal) {
+                return;
+            }
+
+            modal.classList.add('hidden');
+            modal.setAttribute('aria-hidden', 'true');
+
+            if (!anyModalOpen()) {
+                body.classList.remove('overflow-hidden');
+            }
+        }
+
+        document.querySelectorAll('[data-open-modal]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const modalKey = button.getAttribute('data-open-modal');
+                if (!modalKey || button.disabled) {
+                    return;
+                }
+                openModalByKey(modalKey);
+            });
+        });
+
+        document.querySelectorAll('[data-close-modal]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const modal = button.closest('[data-modal]');
+                closeModal(modal);
+            });
+        });
+
+        Object.values(modalLookup).forEach((modal) => {
+            if (!modal) {
+                return;
+            }
+
+            modal.addEventListener('click', (event) => {
+                if (event.target === modal) {
+                    closeModal(modal);
+                }
+            });
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                Object.values(modalLookup).forEach((modal) => closeModal(modal));
+            }
+        });
+
+        const printModalButton = document.getElementById('printModalPrint');
+        if (printModalButton) {
+            printModalButton.addEventListener('click', () => {
+                const table = document.getElementById('printTable');
+                if (!table) {
+                    alert('جدول برای چاپ در دسترس نیست.');
+                    return;
+                }
+
+                const printWindow = window.open('', '_blank');
+                if (!printWindow) {
+                    alert('مرورگر اجازه باز کردن پنجره چاپ را نداد.');
+                    return;
+                }
+
+                const documentStyles = `
+                    <style>
+                        body { font-family: 'Vazirmatn', sans-serif; margin: 24px; direction: rtl; }
+                        h1 { font-size: 20px; margin-bottom: 16px; color: #0f172a; }
+                        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+                        th, td { border: 1px solid #cbd5f5; padding: 10px; text-align: right; }
+                        thead th { background-color: #e0e7ff; }
+                        tbody tr:nth-child(even) { background-color: #f8fafc; }
+                    </style>
+                `;
+
+                printWindow.document.write(`<!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="UTF-8">${documentStyles}<title>چاپ ناموجودها</title></head><body>`);
+                printWindow.document.write('<h1>گزارش محصولات ناموجود</h1>');
+                printWindow.document.write(table.outerHTML);
+                printWindow.document.write('</body></html>');
+                printWindow.document.close();
+                printWindow.focus();
+                printWindow.print();
+                setTimeout(() => {
+                    printWindow.close();
+                }, 250);
+            });
+        }
 
         function filterProducts() {
             const searchTerm = searchInput ? searchInput.value.trim().toLowerCase() : '';
