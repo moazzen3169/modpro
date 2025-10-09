@@ -76,109 +76,136 @@ $status_text = htmlspecialchars($status_text, ENT_QUOTES, 'UTF-8');
         @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;600;700&display=swap');
 
         body {
-            font-family: 'Vazirmatn', sans-serif;
+            font-family:peyda;
             margin: 0;
-            padding: 20px;
+            padding: 10px;
             background: white;
             color: #333;
             direction: rtl;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
         }
 
         .receipt {
-            max-width: 80mm;
+            max-width: 88mm;
             margin: 0 auto;
             border: 1px solid #ddd;
-            padding: 20px;
+            padding: 10px;
             background: white;
+            font-size: 12px;
         }
 
         .header {
             text-align: center;
             border-bottom: 2px solid #333;
-            padding-bottom: 10px;
-            margin-bottom: 20px;
+            padding-bottom: 8px;
+            margin-bottom: 15px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 20px;
+            padding: 15px 10px;
             border-radius: 8px 8px 0 0;
         }
 
         .header h1 {
             margin: 0;
-            font-size: 28px;
+            font-size: 20px;
             font-weight: 700;
             text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
         }
 
         .header p {
-            margin: 5px 0;
-            font-size: 16px;
+            margin: 3px 0;
+            font-size: 12px;
             color: #f0f0f0;
         }
 
         .store-info {
-            margin-top: 10px;
-            font-size: 14px;
+            margin-top: 5px;
+            font-size: 10px;
             color: #e0e0e0;
         }
 
         .sale-info {
-            margin-bottom: 20px;
+            margin-bottom: 15px;
+            font-size: 12px;
         }
 
         .sale-info div {
-            margin-bottom: 5px;
-            font-size: 14px;
+            margin-bottom: 3px;
         }
 
-        .items {
-            border-top: 1px solid #ddd;
-            border-bottom: 1px solid #ddd;
-            padding: 10px 0;
-            margin-bottom: 20px;
+        table.items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+            font-size: 12px;
         }
 
-        .item {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 8px;
-            font-size: 13px;
+        table.items-table th,
+        table.items-table td {
+            border: 1px solid #ddd;
+            padding: 4px 6px;
+            text-align: center;
+            font-size: 10px;
         }
 
-        .item-name {
-            flex: 1;
-            margin-left: 10px;
-        }
-
-        .item-details {
-            text-align: left;
-            min-width: 80px;
+        table.items-table th {
+            background-color: #f5f5f5;
+            font-weight: 600;
         }
 
         .total {
             text-align: left;
-            font-weight: 600;
-            font-size: 16px;
-            border-top: 1px solid #333;
-            padding-top: 10px;
-            margin-top: 10px;
+            font-weight: 700;
+            font-size: 14px;
+            border-top: 2px solid #333;
+            padding-top: 8px;
+            margin-top: 8px;
         }
 
         .footer {
             text-align: center;
-            font-size: 12px;
+            font-size: 10px;
             color: #666;
-            margin-top: 20px;
+            margin-top: 15px;
         }
 
         @media print {
             body {
                 padding: 0;
+                font-size: 11px;
             }
             .receipt {
                 border: none;
                 max-width: none;
-                width: 90%;
+                width: 80mm;
+                margin: 0;
+                padding: 5px;
+            }
+            table.items-table th,
+            table.items-table td {
+                border: 1px solid #000;
+                padding: 3px 5px;
+            }
+            .header {
+                padding: 10px 5px;
+                margin-bottom: 10px;
+            }
+            .sale-info {
+                margin-bottom: 10px;
+            }
+            .total {
+                font-size: 13px;
+                padding-top: 5px;
+                margin-top: 5px;
+                border-top: 1px solid #000;
+            }
+            .footer {
+                font-size: 9px;
+                margin-top: 10px;
             }
         }
     </style>
@@ -186,12 +213,13 @@ $status_text = htmlspecialchars($status_text, ENT_QUOTES, 'UTF-8');
 <body>
     <div class="receipt">
         <div class="header">
-            <h1>آرس</h1>
-            <p>فروشگاه پوشاک مردانه</p>
+            <h1>فروشگاه هادی</h1>
+            <p>کتشلوار و کت دامن </p>
             <p>رسید فروش</p>
             <p>شماره فروش: #<?php echo $sale_id; ?></p>
             <div class="store-info">
-                تلفن: 021-12345678 | آدرس: تهران، خیابان ولیعصر
+                آدرس : تبریز بازار پاساژ و میدان نماز ورودی 1 و 7
+                تلفن:09911631448
             </div>
         </div>
 
@@ -202,21 +230,30 @@ $status_text = htmlspecialchars($status_text, ENT_QUOTES, 'UTF-8');
             <div><strong>وضعیت:</strong> <?php echo $status_text; ?></div>
         </div>
 
-        <div class="items">
-            <?php foreach ($sale_items as $item): ?>
-                <div class="item">
-                    <div class="item-name">
-                        <div><?php echo $item['model_name']; ?></div>
-                        <div style="color: #666; font-size: 12px;">رنگ: <?php echo $item['color']; ?> | سایز: <?php echo $item['size']; ?></div>
-                    </div>
-                    <div class="item-details">
-                        <div><?php echo $item['quantity']; ?> عدد</div>
-                        <div><?php echo number_format($item['sell_price'], 0); ?> تومان</div>
-                        <div style="font-weight: 600;"><?php echo number_format($item['total'], 0); ?> تومان</div>
-                    </div>
-                </div>
-            <?php endforeach; ?>
-        </div>
+        <table class="items-table" cellspacing="0" cellpadding="0" border="0">
+            <thead>
+                <tr>
+                    <th>نام کالا</th>
+                    <th>رنگ</th>
+                    <th>سایز</th>
+                    <th>تعداد</th>
+                    <th>قیمت واحد</th>
+                    <th>جمع</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($sale_items as $item): ?>
+                <tr>
+                    <td style="text-align: right;"><?php echo $item['model_name']; ?></td>
+                    <td><?php echo $item['color']; ?></td>
+                    <td><?php echo $item['size']; ?></td>
+                    <td><?php echo $item['quantity']; ?></td>
+                    <td><?php echo number_format($item['sell_price'], 0); ?> تومان</td>
+                    <td><?php echo number_format($item['total'], 0); ?> تومان</td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
 
         <div class="total">
             مجموع کل: <?php echo number_format($total, 0); ?> تومان
