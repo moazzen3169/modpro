@@ -18,6 +18,10 @@ $today_sales_amount = fetch_sales_sum($conn, "DATE(s.sale_date) = CURDATE()");
 $month_sales_amount = fetch_sales_sum($conn, "MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())");
 $year_sales_amount = fetch_sales_sum($conn, "YEAR(s.sale_date) = YEAR(CURDATE())");
 
+$today_unit_price_sum = fetch_sales_sum($conn, "DATE(s.sale_date) = CURDATE()", 'si.sell_price');
+$month_unit_price_sum = fetch_sales_sum($conn, "MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())", 'si.sell_price');
+$year_unit_price_sum = fetch_sales_sum($conn, "YEAR(s.sale_date) = YEAR(CURDATE())", 'si.sell_price');
+
 // Calculate average purchase price per variant for profit calculations
 $average_purchase_prices = $conn->query("SELECT variant_id, SUM(quantity * buy_price) / NULLIF(SUM(quantity), 0) AS avg_buy_price FROM Purchase_Items GROUP BY variant_id");
 $avg_purchase_map = [];
@@ -255,9 +259,9 @@ while ($row = $top_products_query->fetch_assoc()) {
                     </div>
                 </div>
 
-                <!-- Sold Product Purchase Cost Totals -->
+                <!-- Sold Product Unit Price Totals -->
                 <div class="mb-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-4">جمع مبالغ قیمت خرید محصولات فروخته شده</h3>
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">جمع مبالغ فی محصولات فروخته شده</h3>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 card-hover">
                             <div class="flex items-center">
@@ -265,8 +269,8 @@ while ($row = $top_products_query->fetch_assoc()) {
                                     <i data-feather="tag" class="w-6 h-6 text-sky-500"></i>
                                 </div>
                                 <div>
-                                    <h4 class="text-sm text-gray-500">قیمت خرید محصولات فروخته شده امروز</h4>
-                                    <p class="text-xl font-bold text-gray-800"><?php echo number_format($today_purchase_cost_sum, 0); ?> تومان</p>
+                                    <h4 class="text-sm text-gray-500">فی محصولات فروخته شده امروز</h4>
+                                    <p class="text-xl font-bold text-gray-800"><?php echo number_format($today_unit_price_sum, 0); ?> تومان</p>
                                 </div>
                             </div>
                         </div>
@@ -277,8 +281,8 @@ while ($row = $top_products_query->fetch_assoc()) {
                                     <i data-feather="book-open" class="w-6 h-6 text-emerald-500"></i>
                                 </div>
                                 <div>
-                                    <h4 class="text-sm text-gray-500">قیمت خرید محصولات فروخته شده این ماه</h4>
-                                    <p class="text-xl font-bold text-gray-800"><?php echo number_format($month_purchase_cost_sum, 0); ?> تومان</p>
+                                    <h4 class="text-sm text-gray-500">فی محصولات فروخته شده این ماه</h4>
+                                    <p class="text-xl font-bold text-gray-800"><?php echo number_format($month_unit_price_sum, 0); ?> تومان</p>
                                 </div>
                             </div>
                         </div>
@@ -289,8 +293,8 @@ while ($row = $top_products_query->fetch_assoc()) {
                                     <i data-feather="layers" class="w-6 h-6 text-fuchsia-500"></i>
                                 </div>
                                 <div>
-                                    <h4 class="text-sm text-gray-500">قیمت خرید محصولات فروخته شده امسال</h4>
-                                    <p class="text-xl font-bold text-gray-800"><?php echo number_format($year_purchase_cost_sum, 0); ?> تومان</p>
+                                    <h4 class="text-sm text-gray-500">فی محصولات فروخته شده امسال</h4>
+                                    <p class="text-xl font-bold text-gray-800"><?php echo number_format($year_unit_price_sum, 0); ?> تومان</p>
                                 </div>
                             </div>
                         </div>
