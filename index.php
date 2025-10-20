@@ -3,10 +3,20 @@ require_once __DIR__ . '/env/bootstrap.php';
 
 $flash_messages = get_flash_messages();
 
+function fetch_sales_sum(mysqli $conn, string $where, string $expression = 'si.quantity * si.sell_price'): float {
+    $result = $conn->query("SELECT SUM($expression) AS total FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE $where");
+    if (!$result) {
+        return 0.0;
+    }
+
+    $row = $result->fetch_assoc();
+    return (float) ($row['total'] ?? 0);
+}
+
 // Get sales statistics
-$today_sales_amount = $conn->query("SELECT SUM(si.quantity * si.sell_price) as total FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE DATE(s.sale_date) = CURDATE()")->fetch_assoc()['total'] ?: 0;
-$month_sales_amount = $conn->query("SELECT SUM(si.quantity * si.sell_price) as total FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())")->fetch_assoc()['total'] ?: 0;
-$year_sales_amount = $conn->query("SELECT SUM(si.quantity * si.sell_price) as total FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE YEAR(s.sale_date) = YEAR(CURDATE())")->fetch_assoc()['total'] ?: 0;
+$today_sales_amount = fetch_sales_sum($conn, "DATE(s.sale_date) = CURDATE()");
+$month_sales_amount = fetch_sales_sum($conn, "MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())");
+$year_sales_amount = fetch_sales_sum($conn, "YEAR(s.sale_date) = YEAR(CURDATE())");
 
 // Calculate average purchase price per variant for profit calculations
 $average_purchase_prices = $conn->query("SELECT variant_id, SUM(quantity * buy_price) / NULLIF(SUM(quantity), 0) AS avg_buy_price FROM Purchase_Items GROUP BY variant_id");
@@ -16,6 +26,30 @@ if ($average_purchase_prices) {
         $avg_purchase_map[$row['variant_id']] = (float)$row['avg_buy_price'];
     }
 }
+
+/**
+ * Calculate the total purchase cost of sold items for the given condition by multiplying
+ * the sold quantity of each variant with its average recorded purchase price.
+ */
+function calculate_sold_purchase_cost(mysqli $conn, array $avg_purchase_map, string $where): float {
+    $query = $conn->query("SELECT si.variant_id, si.quantity FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE $where");
+    if (!$query) {
+        return 0.0;
+    }
+
+    $total_cost = 0.0;
+    while ($item = $query->fetch_assoc()) {
+        $variant_id = $item['variant_id'];
+        $avg_buy_price = $avg_purchase_map[$variant_id] ?? 0.0;
+        $total_cost += ((float) $item['quantity']) * $avg_buy_price;
+    }
+
+    return $total_cost;
+}
+
+$today_purchase_cost_sum = calculate_sold_purchase_cost($conn, $avg_purchase_map, "DATE(s.sale_date) = CURDATE()");
+$month_purchase_cost_sum = calculate_sold_purchase_cost($conn, $avg_purchase_map, "MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())");
+$year_purchase_cost_sum = calculate_sold_purchase_cost($conn, $avg_purchase_map, "YEAR(s.sale_date) = YEAR(CURDATE())");
 
 // Helper to calculate profit based on date condition
 function calculate_profit(mysqli $conn, array $avg_purchase_map, string $where): float {
@@ -216,6 +250,48 @@ while ($row = $top_products_query->fetch_assoc()) {
                             <div>
                                 <h3 class="text-sm text-gray-500">تعداد فروش امسال</h3>
                                 <p class="text-xl font-bold text-gray-800"><?php echo number_format($year_sales_count, 0); ?></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sold Product Purchase Cost Totals -->
+                <div class="mb-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">جمع مبالغ قیمت خرید محصولات فروخته شده</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 card-hover">
+                            <div class="flex items-center">
+                                <div class="p-3 bg-sky-50 rounded-lg ml-4">
+                                    <i data-feather="tag" class="w-6 h-6 text-sky-500"></i>
+                                </div>
+                                <div>
+                                    <h4 class="text-sm text-gray-500">قیمت خرید محصولات فروخته شده امروز</h4>
+                                    <p class="text-xl font-bold text-gray-800"><?php echo number_format($today_purchase_cost_sum, 0); ?> تومان</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 card-hover">
+                            <div class="flex items-center">
+                                <div class="p-3 bg-emerald-50 rounded-lg ml-4">
+                                    <i data-feather="book-open" class="w-6 h-6 text-emerald-500"></i>
+                                </div>
+                                <div>
+                                    <h4 class="text-sm text-gray-500">قیمت خرید محصولات فروخته شده این ماه</h4>
+                                    <p class="text-xl font-bold text-gray-800"><?php echo number_format($month_purchase_cost_sum, 0); ?> تومان</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 card-hover">
+                            <div class="flex items-center">
+                                <div class="p-3 bg-fuchsia-50 rounded-lg ml-4">
+                                    <i data-feather="layers" class="w-6 h-6 text-fuchsia-500"></i>
+                                </div>
+                                <div>
+                                    <h4 class="text-sm text-gray-500">قیمت خرید محصولات فروخته شده امسال</h4>
+                                    <p class="text-xl font-bold text-gray-800"><?php echo number_format($year_purchase_cost_sum, 0); ?> تومان</p>
+                                </div>
                             </div>
                         </div>
                     </div>
