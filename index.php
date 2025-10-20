@@ -31,6 +31,30 @@ if ($average_purchase_prices) {
     }
 }
 
+/**
+ * Calculate the total purchase cost of sold items for the given condition by multiplying
+ * the sold quantity of each variant with its average recorded purchase price.
+ */
+function calculate_sold_purchase_cost(mysqli $conn, array $avg_purchase_map, string $where): float {
+    $query = $conn->query("SELECT si.variant_id, si.quantity FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE $where");
+    if (!$query) {
+        return 0.0;
+    }
+
+    $total_cost = 0.0;
+    while ($item = $query->fetch_assoc()) {
+        $variant_id = $item['variant_id'];
+        $avg_buy_price = $avg_purchase_map[$variant_id] ?? 0.0;
+        $total_cost += ((float) $item['quantity']) * $avg_buy_price;
+    }
+
+    return $total_cost;
+}
+
+$today_purchase_cost_sum = calculate_sold_purchase_cost($conn, $avg_purchase_map, "DATE(s.sale_date) = CURDATE()");
+$month_purchase_cost_sum = calculate_sold_purchase_cost($conn, $avg_purchase_map, "MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())");
+$year_purchase_cost_sum = calculate_sold_purchase_cost($conn, $avg_purchase_map, "YEAR(s.sale_date) = YEAR(CURDATE())");
+
 // Helper to calculate profit based on date condition
 function calculate_profit(mysqli $conn, array $avg_purchase_map, string $where): float {
     $query = $conn->query("SELECT si.variant_id, si.quantity, si.sell_price FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE $where");
