@@ -372,6 +372,73 @@ $month_sales = $conn->query("SELECT SUM(si.quantity * si.sell_price) as total FR
 $today_sales_total = $today_sales['total'] ?: 0;
 $month_sales_total = $month_sales['total'] ?: 0;
 
+$suppliers = [];
+$supplierMap = [];
+$supplierResult = $conn->query('SELECT supplier_id, name FROM Suppliers ORDER BY name');
+if ($supplierResult instanceof mysqli_result) {
+    while ($row = $supplierResult->fetch_assoc()) {
+        $row['supplier_id'] = (int) $row['supplier_id'];
+        $suppliers[] = $row;
+        $supplierMap[$row['supplier_id']] = $row['name'];
+    }
+    $supplierResult->free();
+}
+
+$selectedSupplierId = null;
+if (isset($_GET['supplier_id'])) {
+    $supplierFilterValue = $_GET['supplier_id'];
+    if ($supplierFilterValue !== '' && $supplierFilterValue !== 'all') {
+        try {
+            $candidateId = validate_int($supplierFilterValue, 1);
+            if (isset($supplierMap[$candidateId])) {
+                $selectedSupplierId = $candidateId;
+            }
+        } catch (Throwable $e) {
+            // Ignore invalid supplier filter and fallback to showing all suppliers
+        }
+    }
+}
+
+$selectedSupplierName = $selectedSupplierId !== null
+    ? ($supplierMap[$selectedSupplierId] ?? 'تامین‌کننده نامشخص')
+    : 'همه تامین‌کننده‌ها';
+
+$latestSupplierQuery = "SELECT pi.variant_id, pu.supplier_id, pi.buy_price"
+    . " FROM Purchase_Items pi"
+    . " JOIN Purchases pu ON pi.purchase_id = pu.purchase_id"
+    . " WHERE pi.purchase_id = ("
+    . "     SELECT pi2.purchase_id"
+    . "     FROM Purchase_Items pi2"
+    . "     JOIN Purchases pu2 ON pi2.purchase_id = pu2.purchase_id"
+    . "     WHERE pi2.variant_id = pi.variant_id"
+    . "     ORDER BY pu2.purchase_date DESC, pi2.purchase_id DESC"
+    . "     LIMIT 1"
+    . " )";
+
+$supplierStatsQuery = "SELECT"
+    . " COALESCE(SUM(si.quantity * si.sell_price), 0) AS total_sales_amount,"
+    . " COALESCE(SUM(si.quantity), 0) AS total_quantity,"
+    . " COALESCE(SUM((si.sell_price - COALESCE(ls.buy_price, 0)) * si.quantity), 0) AS total_profit"
+    . " FROM Sale_Items si"
+    . " JOIN Sales s ON s.sale_id = si.sale_id"
+    . " LEFT JOIN (" . $latestSupplierQuery . ") ls ON ls.variant_id = si.variant_id";
+
+if ($selectedSupplierId !== null) {
+    $supplierStatsQuery .= ' WHERE ls.supplier_id = ?';
+}
+
+$supplierStatsStmt = $conn->prepare($supplierStatsQuery);
+if ($selectedSupplierId !== null) {
+    $supplierStatsStmt->bind_param('i', $selectedSupplierId);
+}
+$supplierStatsStmt->execute();
+$supplierStatsResult = $supplierStatsStmt->get_result()->fetch_assoc();
+$supplierStatsStmt->close();
+
+$supplierSalesTotal = $supplierStatsResult['total_sales_amount'] ?? 0;
+$supplierSoldQuantity = $supplierStatsResult['total_quantity'] ?? 0;
+$supplierTotalProfit = $supplierStatsResult['total_profit'] ?? 0;
+
 $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Variants pv ON p.product_id = pv.product_id WHERE pv.stock > 0 ORDER BY p.model_name');
 ?>
 <!DOCTYPE html>
@@ -466,11 +533,33 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                             </div>
                         </div>
                     </div>
+                    <div class="mt-6 border-t pt-6">
+                        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
+                            <div>
+                                <p class="text-sm text-gray-500">خلاصه فروش بر اساس تامین‌کننده</p>
+                                <h4 class="text-lg font-semibold text-gray-800"><?php echo htmlspecialchars($selectedSupplierName, ENT_QUOTES, 'UTF-8'); ?></h4>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div class="p-4 rounded-lg border border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50">
+                                <p class="text-sm text-gray-500 mb-2">مجموع مبلغ فروش</p>
+                                <p class="text-2xl font-bold text-gray-800"><?php echo number_format((float) $supplierSalesTotal, 0); ?> تومان</p>
+                            </div>
+                            <div class="p-4 rounded-lg border border-gray-100 bg-gradient-to-r from-green-50 to-emerald-50">
+                                <p class="text-sm text-gray-500 mb-2">تعداد محصولات فروخته‌شده</p>
+                                <p class="text-2xl font-bold text-gray-800"><?php echo number_format((float) $supplierSoldQuantity, 0); ?> عدد</p>
+                            </div>
+                            <div class="p-4 rounded-lg border border-gray-100 bg-gradient-to-r from-amber-50 to-yellow-50">
+                                <p class="text-sm text-gray-500 mb-2">مجموع سود</p>
+                                <p class="text-2xl font-bold text-gray-800"><?php echo number_format((float) $supplierTotalProfit, 0); ?> تومان</p>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Filters and Search -->
                 <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
-                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+                        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
                         <div class="flex flex-col sm:flex-row items-start sm:items-center space-y-3 sm:space-y-0 sm:space-x-4 sm:space-x-reverse">
                             <div class="relative">
                                 <i data-feather="calendar" class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
@@ -484,6 +573,17 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                                 اعمال فیلتر
                             </button>
                         </div>
+                        <form id="supplierFilterForm" method="GET" class="flex items-center space-x-2 space-x-reverse">
+                            <label for="supplierFilterSelect" class="text-sm text-gray-600 ml-2">تامین‌کننده</label>
+                            <select id="supplierFilterSelect" name="supplier_id" onchange="this.form.submit()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                                <option value="all" <?php echo $selectedSupplierId === null ? 'selected' : ''; ?>>همه تامین‌کننده‌ها</option>
+                                <?php foreach ($suppliers as $supplier): ?>
+                                    <option value="<?php echo (int) $supplier['supplier_id']; ?>" <?php echo $selectedSupplierId === (int) $supplier['supplier_id'] ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($supplier['name'], ENT_QUOTES, 'UTF-8'); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </form>
                         <div class="flex items-center space-x-2 space-x-reverse">
                             <!-- Removed Export to Excel button as per user request -->
                             <!--
@@ -503,10 +603,21 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                         . " FROM Sales s"
                         . " LEFT JOIN Customers c ON s.customer_id = c.customer_id"
                         . " LEFT JOIN Sale_Items si ON s.sale_id = si.sale_id"
-                        . " GROUP BY s.sale_id"
-                        . " ORDER BY s.sale_date DESC, s.sale_id DESC";
+                        . " LEFT JOIN (" . $latestSupplierQuery . ") ls ON ls.variant_id = si.variant_id";
 
-                    $salesResult = $conn->query($salesQuery);
+                    if ($selectedSupplierId !== null) {
+                        $salesQuery .= ' WHERE ls.supplier_id = ?';
+                    }
+
+                    $salesQuery .= ' GROUP BY s.sale_id ORDER BY s.sale_date DESC, s.sale_id DESC';
+
+                    $salesStmt = $conn->prepare($salesQuery);
+                    if ($selectedSupplierId !== null) {
+                        $salesStmt->bind_param('i', $selectedSupplierId);
+                    }
+                    $salesStmt->execute();
+                    $salesResult = $salesStmt->get_result();
+                    $salesStmt->close();
 
                     echo render_sales_table($salesResult);
                     ?>
@@ -1180,6 +1291,8 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
         function filterSales() {
             const dateFilter = document.getElementById('dateFilter').value;
             const searchInput = document.getElementById('searchInput').value;
+            const supplierFilterSelect = document.getElementById('supplierFilterSelect');
+            const supplierId = supplierFilterSelect ? supplierFilterSelect.value : 'all';
             const salesListContainer = document.getElementById('salesList');
 
             if (!salesListContainer) {
@@ -1196,6 +1309,7 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
             const formData = new FormData();
             formData.append('date', dateFilter);
             formData.append('search', searchInput);
+            formData.append('supplier_id', supplierId);
 
             fetch('filter_sales.php', {
                 method: 'POST',
