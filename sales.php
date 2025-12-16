@@ -367,8 +367,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
 $flash_messages = get_flash_messages();
 
+[$currentJalaliYear, $currentJalaliMonth] = get_current_jalali_date();
+[$currentMonthStart, $currentMonthEnd] = get_jalali_month_gregorian_range($currentJalaliYear, $currentJalaliMonth);
+
 $today_sales = $conn->query("SELECT SUM(si.quantity * si.sell_price) as total FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE DATE(s.sale_date) = CURDATE()")->fetch_assoc();
-$month_sales = $conn->query("SELECT SUM(si.quantity * si.sell_price) as total FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())")->fetch_assoc();
+$month_sales = $conn->query("SELECT SUM(si.quantity * si.sell_price) as total FROM Sales s JOIN Sale_Items si ON s.sale_id = si.sale_id WHERE s.sale_date BETWEEN '$currentMonthStart' AND '$currentMonthEnd'")->fetch_assoc();
 $today_sales_total = $today_sales['total'] ?: 0;
 $month_sales_total = $month_sales['total'] ?: 0;
 
@@ -382,6 +385,27 @@ if ($supplierResult instanceof mysqli_result) {
         $supplierMap[$row['supplier_id']] = $row['name'];
     }
     $supplierResult->free();
+}
+
+$categoryOptions = [];
+$categoryResult = $conn->query("SELECT DISTINCT category FROM Products WHERE category IS NOT NULL AND category <> '' ORDER BY category");
+if ($categoryResult instanceof mysqli_result) {
+    while ($row = $categoryResult->fetch_assoc()) {
+        $categoryOptions[] = $row['category'];
+    }
+    $categoryResult->free();
+}
+
+$productFilterOptions = [];
+$productFilterResult = $conn->query('SELECT product_id, model_name FROM Products ORDER BY model_name');
+if ($productFilterResult instanceof mysqli_result) {
+    while ($row = $productFilterResult->fetch_assoc()) {
+        $productFilterOptions[] = [
+            'product_id' => (int) $row['product_id'],
+            'model_name' => $row['model_name'],
+        ];
+    }
+    $productFilterResult->free();
 }
 
 $selectedSupplierId = null;
@@ -559,7 +583,45 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
 
                 <!-- Filters and Search -->
                 <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
-                        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                        <div class="space-y-2">
+                            <label for="jalaliYear" class="text-sm text-gray-600">سال</label>
+                            <select id="jalaliYear" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                                <option value="">همه سال‌ها</option>
+                                <?php for ($year = $currentJalaliYear; $year >= $currentJalaliYear - 5; $year--): ?>
+                                    <option value="<?php echo $year; ?>" <?php echo $year === $currentJalaliYear ? 'selected' : ''; ?>><?php echo $year; ?></option>
+                                <?php endfor; ?>
+                            </select>
+                        </div>
+                        <div class="space-y-2">
+                            <label for="jalaliMonth" class="text-sm text-gray-600">ماه</label>
+                            <select id="jalaliMonth" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                                <option value="">همه ماه‌ها</option>
+                                <?php for ($m = 1; $m <= 12; $m++): ?>
+                                    <option value="<?php echo $m; ?>" <?php echo $m === $currentJalaliMonth ? 'selected' : ''; ?>><?php echo get_jalali_month_name($m); ?></option>
+                                <?php endfor; ?>
+                            </select>
+                        </div>
+                        <div class="space-y-2">
+                            <label for="salesCategoryFilter" class="text-sm text-gray-600">دسته‌بندی</label>
+                            <select id="salesCategoryFilter" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                                <option value="">همه دسته‌بندی‌ها</option>
+                                <?php foreach ($categoryOptions as $categoryOption): ?>
+                                    <option value="<?php echo htmlspecialchars($categoryOption, ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars($categoryOption, ENT_QUOTES, 'UTF-8'); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="space-y-2">
+                            <label for="productFilter" class="text-sm text-gray-600">محصول</label>
+                            <select id="productFilter" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                                <option value="">همه محصولات</option>
+                                <?php foreach ($productFilterOptions as $productOption): ?>
+                                    <option value="<?php echo $productOption['product_id']; ?>"><?php echo htmlspecialchars($productOption['model_name'], ENT_QUOTES, 'UTF-8'); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
                         <div class="flex flex-col sm:flex-row items-start sm:items-center space-y-3 sm:space-y-0 sm:space-x-4 sm:space-x-reverse">
                             <div class="relative">
                                 <i data-feather="calendar" class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
@@ -569,7 +631,7 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                                 <i data-feather="search" class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
                                 <input type="text" id="searchInput" placeholder="جستجو در فروش‌ها..." class="pr-10 pl-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            <button onclick="filterSales()" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
+                            <button onclick="applySalesFilters()" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
                                 اعمال فیلتر
                             </button>
                         </div>
@@ -592,6 +654,30 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                                 <span>خروجی Excel</span>
                             </button>
                             -->
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-3">
+                        <div>
+                            <p class="text-sm text-gray-500">خلاصه فروش بر اساس فیلترهای انتخابی</p>
+                            <p id="filteredContextLabel" class="text-base font-semibold text-gray-800">در انتظار محاسبه...</p>
+                        </div>
+                        <p class="text-xs text-gray-500">همه ارقام بر اساس تومان و تعداد آیتم‌ها هستند.</p>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="p-4 rounded-lg border border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50">
+                            <p class="text-sm text-gray-500 mb-2">مجموع مبلغ فروش</p>
+                            <p id="filteredTotalAmount" class="text-2xl font-bold text-gray-800">0 تومان</p>
+                        </div>
+                        <div class="p-4 rounded-lg border border-gray-100 bg-gradient-to-r from-emerald-50 to-green-50">
+                            <p class="text-sm text-gray-500 mb-2">تعداد محصولات فروخته‌شده</p>
+                            <p id="filteredQuantity" class="text-2xl font-bold text-gray-800">0 عدد</p>
+                        </div>
+                        <div class="p-4 rounded-lg border border-gray-100 bg-gradient-to-r from-amber-50 to-yellow-50">
+                            <p class="text-sm text-gray-500 mb-2">مجموع سود</p>
+                            <p id="filteredProfit" class="text-2xl font-bold text-gray-800">0 تومان</p>
                         </div>
                     </div>
                 </div>
@@ -1286,13 +1372,40 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                 });
         }
 
+        function collectSalesFilters() {
+            const supplierFilterSelect = document.getElementById('supplierFilterSelect');
+            return {
+                date: document.getElementById('dateFilter').value,
+                search: document.getElementById('searchInput').value,
+                supplier_id: supplierFilterSelect ? supplierFilterSelect.value : 'all',
+                jalali_year: document.getElementById('jalaliYear')?.value || '',
+                jalali_month: document.getElementById('jalaliMonth')?.value || '',
+                category: document.getElementById('salesCategoryFilter')?.value || '',
+                product_id: document.getElementById('productFilter')?.value || '',
+            };
+        }
 
+        function buildFormDataFromFilters(filters) {
+            const formData = new FormData();
+            Object.entries(filters).forEach(([key, value]) => formData.append(key, value));
+            return formData;
+        }
+
+        function formatCurrency(value) {
+            return `${Number(value || 0).toLocaleString('fa-IR')} تومان`;
+        }
+
+        function formatQuantity(value) {
+            return `${Number(value || 0).toLocaleString('fa-IR')} عدد`;
+        }
+
+        function applySalesFilters() {
+            filterSales();
+            refreshSalesInsights();
+        }
 
         function filterSales() {
-            const dateFilter = document.getElementById('dateFilter').value;
-            const searchInput = document.getElementById('searchInput').value;
-            const supplierFilterSelect = document.getElementById('supplierFilterSelect');
-            const supplierId = supplierFilterSelect ? supplierFilterSelect.value : 'all';
+            const filters = collectSalesFilters();
             const salesListContainer = document.getElementById('salesList');
 
             if (!salesListContainer) {
@@ -1306,10 +1419,7 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                 </div>
             `;
 
-            const formData = new FormData();
-            formData.append('date', dateFilter);
-            formData.append('search', searchInput);
-            formData.append('supplier_id', supplierId);
+            const formData = buildFormDataFromFilters(filters);
 
             fetch('filter_sales.php', {
                 method: 'POST',
@@ -1338,6 +1448,38 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                         </div>
                     `;
                     feather.replace();
+                });
+        }
+
+        function refreshSalesInsights() {
+            const filters = collectSalesFilters();
+            const formData = buildFormDataFromFilters(filters);
+
+            fetch('get_sales_insights.php', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            })
+                .then(response => response.json())
+                .then(data => {
+                    const amountEl = document.getElementById('filteredTotalAmount');
+                    const quantityEl = document.getElementById('filteredQuantity');
+                    const profitEl = document.getElementById('filteredProfit');
+                    const summaryEl = document.getElementById('filteredContextLabel');
+
+                    if (amountEl) amountEl.textContent = formatCurrency(data.total_amount);
+                    if (quantityEl) quantityEl.textContent = formatQuantity(data.total_quantity);
+                    if (profitEl) profitEl.textContent = formatCurrency(data.total_profit);
+                    if (summaryEl) summaryEl.textContent = data.summary || 'نتیجه‌ای یافت نشد.';
+                })
+                .catch(error => {
+                    console.error('Error loading sales insights:', error);
+                    const summaryEl = document.getElementById('filteredContextLabel');
+                    if (summaryEl) {
+                        summaryEl.textContent = 'خطا در محاسبه آمار فیلتر شده';
+                    }
                 });
         }
 
@@ -1434,6 +1576,7 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
         // Initialize DataTables
         $(document).ready(function() {
             initializeSalesTable();
+            refreshSalesInsights();
         });
 
         // Out of stock functionality

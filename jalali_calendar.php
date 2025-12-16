@@ -183,6 +183,37 @@ function get_jalali_month_days(int $jy, int $jm): int
 }
 
 /**
+ * Get Gregorian date range (Y-m-d) that covers the provided Jalali month.
+ */
+function get_jalali_month_gregorian_range(int $jy, int $jm): array
+{
+    $daysInMonth = get_jalali_month_days($jy, $jm);
+
+    [$startGy, $startGm, $startGd] = jalali_to_gregorian($jy, $jm, 1);
+    [$endGy, $endGm, $endGd] = jalali_to_gregorian($jy, $jm, $daysInMonth);
+
+    return [
+        sprintf('%04d-%02d-%02d', $startGy, $startGm, $startGd),
+        sprintf('%04d-%02d-%02d', $endGy, $endGm, $endGd),
+    ];
+}
+
+/**
+ * Get Gregorian date range (Y-m-d) that covers the provided Jalali year.
+ */
+function get_jalali_year_gregorian_range(int $jy): array
+{
+    [$yearStartGy, $yearStartGm, $yearStartGd] = jalali_to_gregorian($jy, 1, 1);
+    $lastDayOfYear = get_jalali_month_days($jy, 12);
+    [$yearEndGy, $yearEndGm, $yearEndGd] = jalali_to_gregorian($jy, 12, $lastDayOfYear);
+
+    return [
+        sprintf('%04d-%02d-%02d', $yearStartGy, $yearStartGm, $yearStartGd),
+        sprintf('%04d-%02d-%02d', $yearEndGy, $yearEndGm, $yearEndGd),
+    ];
+}
+
+/**
  * Get Jalali month name
  *
  * @param int $month Month number (1-12)

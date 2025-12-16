@@ -14,13 +14,17 @@ function fetch_sales_sum(mysqli $conn, string $where, string $expression = 'si.q
 }
 
 // Get sales statistics
+[$currentJalaliYear, $currentJalaliMonth] = get_current_jalali_date();
+[$currentMonthStart, $currentMonthEnd] = get_jalali_month_gregorian_range($currentJalaliYear, $currentJalaliMonth);
+[$currentYearStart, $currentYearEnd] = get_jalali_year_gregorian_range($currentJalaliYear);
+
 $today_sales_amount = fetch_sales_sum($conn, "DATE(s.sale_date) = CURDATE()");
-$month_sales_amount = fetch_sales_sum($conn, "MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())");
-$year_sales_amount = fetch_sales_sum($conn, "YEAR(s.sale_date) = YEAR(CURDATE())");
+$month_sales_amount = fetch_sales_sum($conn, "s.sale_date BETWEEN '$currentMonthStart' AND '$currentMonthEnd'");
+$year_sales_amount = fetch_sales_sum($conn, "s.sale_date BETWEEN '$currentYearStart' AND '$currentYearEnd'");
 
 $today_unit_price_sum = fetch_sales_sum($conn, "DATE(s.sale_date) = CURDATE()", 'si.sell_price');
-$month_unit_price_sum = fetch_sales_sum($conn, "MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())", 'si.sell_price');
-$year_unit_price_sum = fetch_sales_sum($conn, "YEAR(s.sale_date) = YEAR(CURDATE())", 'si.sell_price');
+$month_unit_price_sum = fetch_sales_sum($conn, "s.sale_date BETWEEN '$currentMonthStart' AND '$currentMonthEnd'", 'si.sell_price');
+$year_unit_price_sum = fetch_sales_sum($conn, "s.sale_date BETWEEN '$currentYearStart' AND '$currentYearEnd'", 'si.sell_price');
 
 // Calculate average purchase price per variant for profit calculations
 $average_purchase_prices = $conn->query("SELECT variant_id, SUM(quantity * buy_price) / NULLIF(SUM(quantity), 0) AS avg_buy_price FROM Purchase_Items GROUP BY variant_id");
@@ -52,8 +56,8 @@ function calculate_sold_purchase_cost(mysqli $conn, array $avg_purchase_map, str
 }
 
 $today_purchase_cost_sum = calculate_sold_purchase_cost($conn, $avg_purchase_map, "DATE(s.sale_date) = CURDATE()");
-$month_purchase_cost_sum = calculate_sold_purchase_cost($conn, $avg_purchase_map, "MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())");
-$year_purchase_cost_sum = calculate_sold_purchase_cost($conn, $avg_purchase_map, "YEAR(s.sale_date) = YEAR(CURDATE())");
+$month_purchase_cost_sum = calculate_sold_purchase_cost($conn, $avg_purchase_map, "s.sale_date BETWEEN '$currentMonthStart' AND '$currentMonthEnd'");
+$year_purchase_cost_sum = calculate_sold_purchase_cost($conn, $avg_purchase_map, "s.sale_date BETWEEN '$currentYearStart' AND '$currentYearEnd'");
 
 // Helper to calculate profit based on date condition
 function calculate_profit(mysqli $conn, array $avg_purchase_map, string $where): float {
@@ -71,12 +75,12 @@ function calculate_profit(mysqli $conn, array $avg_purchase_map, string $where):
 }
 
 $today_profit_amount = calculate_profit($conn, $avg_purchase_map, "DATE(s.sale_date) = CURDATE()");
-$month_profit_amount = calculate_profit($conn, $avg_purchase_map, "MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())");
-$year_profit_amount = calculate_profit($conn, $avg_purchase_map, "YEAR(s.sale_date) = YEAR(CURDATE())");
+$month_profit_amount = calculate_profit($conn, $avg_purchase_map, "s.sale_date BETWEEN '$currentMonthStart' AND '$currentMonthEnd'");
+$year_profit_amount = calculate_profit($conn, $avg_purchase_map, "s.sale_date BETWEEN '$currentYearStart' AND '$currentYearEnd'");
 
 $today_sales_count = $conn->query("SELECT COUNT(DISTINCT s.sale_id) as count FROM Sales s WHERE DATE(s.sale_date) = CURDATE()")->fetch_assoc()['count'] ?: 0;
-$month_sales_count = $conn->query("SELECT COUNT(DISTINCT s.sale_id) as count FROM Sales s WHERE MONTH(s.sale_date) = MONTH(CURDATE()) AND YEAR(s.sale_date) = YEAR(CURDATE())")->fetch_assoc()['count'] ?: 0;
-$year_sales_count = $conn->query("SELECT COUNT(DISTINCT s.sale_id) as count FROM Sales s WHERE YEAR(s.sale_date) = YEAR(CURDATE())")->fetch_assoc()['count'] ?: 0;
+$month_sales_count = $conn->query("SELECT COUNT(DISTINCT s.sale_id) as count FROM Sales s WHERE s.sale_date BETWEEN '$currentMonthStart' AND '$currentMonthEnd'")->fetch_assoc()['count'] ?: 0;
+$year_sales_count = $conn->query("SELECT COUNT(DISTINCT s.sale_id) as count FROM Sales s WHERE s.sale_date BETWEEN '$currentYearStart' AND '$currentYearEnd'")->fetch_assoc()['count'] ?: 0;
 
 // Get best-selling products
 $best_selling = $conn->query("SELECT p.model_name, SUM(si.quantity) as total_sold FROM Products p JOIN Product_Variants pv ON p.product_id = pv.product_id JOIN Sale_Items si ON pv.variant_id = si.variant_id GROUP BY p.product_id ORDER BY total_sold DESC LIMIT 5");

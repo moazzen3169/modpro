@@ -1,19 +1,19 @@
 <?php
-declare(strict_types=1);
-
 require_once __DIR__ . '/env/bootstrap.php';
-require_once __DIR__ . '/includes/sales_table_renderer.php';
+
+header('Content-Type: application/json');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
-    echo '<div class="text-center py-8 text-red-500">درخواست نامعتبر است.</div>';
+    echo json_encode(['error' => 'روش درخواست نامعتبر است.']);
     exit();
 }
 
 $dateFilter = trim((string) ($_POST['date'] ?? ''));
 $searchTerm = trim((string) ($_POST['search'] ?? ''));
-$supplierId = null;
 $categoryFilter = trim((string) ($_POST['category'] ?? ''));
+$supplierId = null;
+$supplierName = null;
 $productId = null;
 $jalaliYear = null;
 $jalaliMonth = null;
@@ -23,15 +23,18 @@ if (isset($_POST['supplier_id'])) {
     if ($supplierFilterValue !== '' && $supplierFilterValue !== 'all') {
         try {
             $candidateId = validate_int($supplierFilterValue, 1);
-            $supplierCheck = $conn->prepare('SELECT supplier_id FROM Suppliers WHERE supplier_id = ?');
+            $supplierCheck = $conn->prepare('SELECT supplier_id, name FROM Suppliers WHERE supplier_id = ?');
             $supplierCheck->bind_param('i', $candidateId);
             $supplierCheck->execute();
-            if ($supplierCheck->get_result()->fetch_row()) {
+            $supplierRow = $supplierCheck->get_result()->fetch_assoc();
+            if ($supplierRow) {
                 $supplierId = $candidateId;
+                $supplierName = $supplierRow['name'] ?? '';
             }
             $supplierCheck->close();
         } catch (Throwable $e) {
-            // Ignore invalid supplier filter and treat as showing all
+            echo json_encode(['error' => normalize_error_message($e)]);
+            exit();
         }
     }
 }
@@ -40,14 +43,7 @@ try {
     if ($dateFilter !== '') {
         $dateFilter = validate_date($dateFilter);
     }
-} catch (Throwable $e) {
-    http_response_code(422);
-    $message = htmlspecialchars(normalize_error_message($e), ENT_QUOTES, 'UTF-8');
-    echo '<div class="text-center py-8 text-red-500">' . $message . '</div>';
-    exit();
-}
 
-try {
     if (isset($_POST['jalali_year']) && $_POST['jalali_year'] !== '') {
         $jalaliYear = validate_int($_POST['jalali_year'], 1300);
     }
@@ -64,8 +60,7 @@ try {
     }
 } catch (Throwable $e) {
     http_response_code(422);
-    $message = htmlspecialchars(normalize_error_message($e), ENT_QUOTES, 'UTF-8');
-    echo '<div class="text-center py-8 text-red-500">' . $message . '</div>';
+    echo json_encode(['error' => normalize_error_message($e)]);
     exit();
 }
 
@@ -131,14 +126,16 @@ $latestSupplierQuery = "SELECT pi.variant_id, pu.supplier_id, pi.buy_price"
     . "     LIMIT 1"
     . " )";
 
-$query = 'SELECT s.*, c.name AS customer_name, COUNT(si.sale_item_id) AS item_count, '
-    . 'SUM(si.quantity * si.sell_price) AS total_amount '
-    . 'FROM Sales s '
-    . 'LEFT JOIN Customers c ON s.customer_id = c.customer_id '
-    . 'LEFT JOIN Sale_Items si ON s.sale_id = si.sale_id '
-    . 'LEFT JOIN Product_Variants pv ON si.variant_id = pv.variant_id '
-    . 'LEFT JOIN Products p ON pv.product_id = p.product_id '
-    . 'LEFT JOIN (' . $latestSupplierQuery . ') ls ON ls.variant_id = si.variant_id';
+$query = 'SELECT '
+    . 'COALESCE(SUM(si.quantity), 0) AS total_quantity,'
+    . ' COALESCE(SUM(si.quantity * si.sell_price), 0) AS total_amount,'
+    . ' COALESCE(SUM((si.sell_price - COALESCE(ls.buy_price, 0)) * si.quantity), 0) AS total_profit'
+    . ' FROM Sale_Items si'
+    . ' JOIN Sales s ON s.sale_id = si.sale_id'
+    . ' LEFT JOIN Customers c ON s.customer_id = c.customer_id'
+    . ' LEFT JOIN Product_Variants pv ON si.variant_id = pv.variant_id'
+    . ' LEFT JOIN Products p ON pv.product_id = p.product_id'
+    . ' LEFT JOIN (' . $latestSupplierQuery . ') ls ON ls.variant_id = si.variant_id';
 
 if ($supplierId !== null) {
     $conditions[] = 'ls.supplier_id = ?';
@@ -150,12 +147,10 @@ if ($conditions !== []) {
     $query .= ' WHERE ' . implode(' AND ', $conditions);
 }
 
-$query .= ' GROUP BY s.sale_id ORDER BY s.sale_date DESC, s.sale_id DESC';
-
 $stmt = $conn->prepare($query);
 if ($stmt === false) {
     http_response_code(500);
-    echo '<div class="text-center py-8 text-red-500">خطا در آماده‌سازی کوئری فیلتر.</div>';
+    echo json_encode(['error' => 'خطا در آماده‌سازی کوئری خلاصه فروش.']);
     exit();
 }
 
@@ -171,12 +166,48 @@ if ($params !== []) {
 
 try {
     $stmt->execute();
-    $result = $stmt->get_result();
-    echo render_sales_table($result);
+    $result = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $summaryParts = [];
+
+    if ($dateFilter !== '') {
+        $summaryParts[] = 'تاریخ ' . convert_gregorian_to_jalali_for_display($dateFilter);
+    } elseif ($jalaliYear !== null) {
+        if ($jalaliMonth !== null) {
+            $summaryParts[] = sprintf('ماه %s %d', get_jalali_month_name($jalaliMonth), $jalaliYear);
+        } else {
+            $summaryParts[] = 'سال ' . $jalaliYear;
+        }
+    }
+
+    if ($supplierId !== null) {
+        $summaryParts[] = 'تامین‌کننده: ' . ($supplierName ?? ('#' . $supplierId));
+    }
+
+    if ($categoryFilter !== '') {
+        $summaryParts[] = 'دسته‌بندی: ' . $categoryFilter;
+    }
+
+    if ($productId !== null) {
+        $productNameStmt = $conn->prepare('SELECT model_name FROM Products WHERE product_id = ?');
+        $productNameStmt->bind_param('i', $productId);
+        $productNameStmt->execute();
+        $productName = $productNameStmt->get_result()->fetch_assoc()['model_name'] ?? null;
+        $productNameStmt->close();
+
+        $summaryParts[] = 'محصول: ' . ($productName ?? ('#' . $productId));
+    }
+
+    $summary = $summaryParts !== [] ? implode(' | ', $summaryParts) : 'همه فروش‌ها در بازه موجود';
+
+    echo json_encode([
+        'total_quantity' => (float) ($result['total_quantity'] ?? 0),
+        'total_amount' => (float) ($result['total_amount'] ?? 0),
+        'total_profit' => (float) ($result['total_profit'] ?? 0),
+        'summary' => $summary,
+    ]);
 } catch (Throwable $e) {
     http_response_code(500);
-    $message = htmlspecialchars(normalize_error_message($e), ENT_QUOTES, 'UTF-8');
-    echo '<div class="text-center py-8 text-red-500">' . $message . '</div>';
-} finally {
-    $stmt->close();
+    echo json_encode(['error' => normalize_error_message($e)]);
 }
