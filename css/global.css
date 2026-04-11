@@ -4,8 +4,11 @@
 @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@200;400;600&display=swap');
 
 body {
-    font-family: 'Vazirmatn', sans-serif;
     direction: rtl;
+}
+*{
+    font-family: peyda;
+
 }
 
 /* Utility Classes */
