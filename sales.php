@@ -557,7 +557,7 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                             </div>
                         </div>
                     </div>
-                    <div class="mt-6 border-t pt-6">
+                    <div class="mt-6 border-t pt-6" style=" grid-column: 1 / 4;">
                         <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
                             <div>
                                 <p class="text-sm text-gray-500">خلاصه فروش بر اساس تامین‌کننده</p>

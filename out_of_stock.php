@@ -151,8 +151,8 @@ $hasOutOfStock = count($outOfStockProducts) > 0;
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@100..900&display=swap" rel="stylesheet">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/feather-icons"></script>
+    <script src="libs/tailwind.js"></script>
+    <script src="libs/feather-icons.js"></script>
     <style>
         body {
             font-family: 'Vazirmatn', sans-serif;

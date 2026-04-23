@@ -240,8 +240,8 @@ $products = $conn->query('SELECT * FROM Products ORDER BY model_name');
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>مدیریت مرجوعی‌ها - SuitStore Manager Pro</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/feather-icons"></script>
+    <script src="libs/tailwind.js"></script>
+    <script src="libs/feather-icons.js"></script>
     <link rel="stylesheet" href="libs/vazirmatn.css">
     <link href="css/global.css" rel="stylesheet">
 </head>

@@ -343,9 +343,8 @@ $zero_stock_count = $conn->query("SELECT COUNT(*) as count FROM Product_Variants
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>مدیریت محصولات - SuitStore Manager Pro</title>
     <link rel="stylesheet" href="libs/vazirmatn.css">
-    <link rel="stylesheet" href="css/global.css">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/feather-icons"></script>
+    <script src="libs/tailwind.js"></script>
+    <script src="libs/feather-icons.js"></script>
 </head>
 <body class="bg-gray-50">
     <?php if (!empty($flash_messages['success']) || !empty($flash_messages['error'])): ?>

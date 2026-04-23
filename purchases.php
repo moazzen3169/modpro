@@ -276,43 +276,48 @@ $purchaseItemsStmt->close();
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>مشاهده خریدها - SuitStore Manager Pro</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/feather-icons"></script>
+    <script src="libs/tailwind.js"></script>
+    <script src="libs/feather-icons.js"></script>
     <link href="css/global.css" rel="stylesheet">
 </head>
 <body class="bg-gray-50">
     <div class="flex h-screen overflow-hidden">
         <!-- Sidebar -->
         <?php include 'sidebar.php'; ?>
+
+
+        
         
         <!-- Main Content -->
-        <div class="flex-1 overflow-auto p-6">
+        <div class="flex-1 overflow-auto custom-scrollbar">
             <!-- Header -->
-            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-                <div>
-                    <h2 class="text-2xl font-semibold text-gray-800">خریدها</h2>
-                    <p class="text-sm text-gray-500 mt-1">نمایش جزئیات خریدهای <?php echo htmlspecialchars($selectedSupplierName, ENT_QUOTES, 'UTF-8'); ?></p>
+                <header class="bg-white border-b border-gray-200 p-4 ">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+                    <div>
+                        <h2 class="text-2xl font-semibold text-gray-800">خریدها</h2>
+                        <p class="text-sm text-gray-500 mt-1">نمایش جزئیات خریدهای <?php echo htmlspecialchars($selectedSupplierName, ENT_QUOTES, 'UTF-8'); ?></p>
+                    </div>
+                    <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                        <form method="get" class="flex items-center bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
+                            <label for="supplierFilter" class="text-sm text-gray-600 ml-2">تامین‌کننده</label>
+                            <select id="supplierFilter" name="supplier_id" onchange="this.form.submit()" class="border-0 focus:ring-0 text-sm text-gray-700">
+                                <option value="" <?php echo $selectedSupplierId === null ? 'selected' : ''; ?>>همه تامین‌کننده‌ها</option>
+                                <?php foreach ($suppliers as $supplier): ?>
+                                    <option value="<?php echo (int) $supplier['supplier_id']; ?>" <?php echo $selectedSupplierId === (int) $supplier['supplier_id'] ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($supplier['name'], ENT_QUOTES, 'UTF-8'); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </form>
+                        <button onclick="openModal('purchaseModal')" class="flex items-center justify-center px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all duration-200 shadow-sm hover:shadow-md">
+                            <i data-feather="plus" class="ml-2"></i>
+                            خرید جدید
+                        </button>
+                    </div>
                 </div>
-                <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                    <form method="get" class="flex items-center bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
-                        <label for="supplierFilter" class="text-sm text-gray-600 ml-2">تامین‌کننده</label>
-                        <select id="supplierFilter" name="supplier_id" onchange="this.form.submit()" class="border-0 focus:ring-0 text-sm text-gray-700">
-                            <option value="" <?php echo $selectedSupplierId === null ? 'selected' : ''; ?>>همه تامین‌کننده‌ها</option>
-                            <?php foreach ($suppliers as $supplier): ?>
-                                <option value="<?php echo (int) $supplier['supplier_id']; ?>" <?php echo $selectedSupplierId === (int) $supplier['supplier_id'] ? 'selected' : ''; ?>>
-                                    <?php echo htmlspecialchars($supplier['name'], ENT_QUOTES, 'UTF-8'); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </form>
-                    <button onclick="openModal('purchaseModal')" class="flex items-center justify-center px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all duration-200 shadow-sm hover:shadow-md">
-                        <i data-feather="plus" class="ml-2"></i>
-                        خرید جدید
-                    </button>
-                </div>
-            </div>
+                </header>
 
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 m-6">
                 <div class="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
                     <div class="flex items-center justify-between mb-2">
                         <span class="text-sm text-gray-500">مجموع خریدها</span>
@@ -354,7 +359,7 @@ $purchaseItemsStmt->close();
                 </div>
             <?php endif; ?>
 
-            <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden m-6">
                 <div class="p-6 border-b border-gray-100">
                     <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                         <div>

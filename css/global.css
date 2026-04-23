@@ -16,9 +16,7 @@ body {
     box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
 }
 
-.header-shadow {
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-}
+
 
 .card-hover {
     transition: all 0.3s ease;
@@ -319,6 +317,13 @@ textarea:focus {
     font-weight: 600;
     font-size: 1.125rem;
     border-bottom: 1px solid #e5e7eb;
+}
+header{
+    height: 77px;
+    position: sticky;
+    top: 0px;
+    z-index: 50;
+
 }
 
 .month-header:hover {
