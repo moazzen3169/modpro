@@ -794,8 +794,8 @@ $products = $conn->query('SELECT DISTINCT p.* FROM Products p JOIN Product_Varia
                                                 <div>
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">روش پرداخت</label>
                                                     <select name="payment_method" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                                        <option value="cash">نقدی</option>
                                                         <option value="credit_card">کارت اعتباری</option>
+                                                        <option value="cash">نقدی</option>
                                                         <option value="bank_transfer">انتقال بانکی</option>
                                                     </select>
                                                 </div>
