@@ -263,47 +263,7 @@ while ($row = $top_products_query->fetch_assoc()) {
                     </div>
                 </div>
 
-                <!-- Sold Product Unit Price Totals -->
-                <div class="mb-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-4">جمع مبالغ فی محصولات فروخته شده</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 card-hover">
-                            <div class="flex items-center">
-                                <div class="p-3 bg-sky-50 rounded-lg ml-4">
-                                    <i data-feather="tag" class="w-6 h-6 text-sky-500"></i>
-                                </div>
-                                <div>
-                                    <h4 class="text-sm text-gray-500">فی محصولات فروخته شده امروز</h4>
-                                    <p class="text-xl font-bold text-gray-800"><?php echo number_format($today_unit_price_sum, 0); ?> تومان</p>
-                                </div>
-                            </div>
-                        </div>
 
-                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 card-hover">
-                            <div class="flex items-center">
-                                <div class="p-3 bg-emerald-50 rounded-lg ml-4">
-                                    <i data-feather="book-open" class="w-6 h-6 text-emerald-500"></i>
-                                </div>
-                                <div>
-                                    <h4 class="text-sm text-gray-500">فی محصولات فروخته شده این ماه</h4>
-                                    <p class="text-xl font-bold text-gray-800"><?php echo number_format($month_unit_price_sum, 0); ?> تومان</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 card-hover">
-                            <div class="flex items-center">
-                                <div class="p-3 bg-fuchsia-50 rounded-lg ml-4">
-                                    <i data-feather="layers" class="w-6 h-6 text-fuchsia-500"></i>
-                                </div>
-                                <div>
-                                    <h4 class="text-sm text-gray-500">فی محصولات فروخته شده امسال</h4>
-                                    <p class="text-xl font-bold text-gray-800"><?php echo number_format($year_unit_price_sum, 0); ?> تومان</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
 
                 <!-- Charts Row -->
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">

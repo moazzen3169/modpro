@@ -215,7 +215,7 @@ if ($selectedSupplierId !== null) {
         WHERE pr.supplier_id = ?
         GROUP BY pr.purchase_id, pr.purchase_date
         ORDER BY pr.purchase_date DESC, pr.purchase_id DESC
-        LIMIT 100
+        LIMIT 10
     ');
     $purchaseListStmt->bind_param('i', $selectedSupplierId);
     $purchaseListStmt->execute();
@@ -535,34 +535,9 @@ if ($selectedSupplierId !== null) {
                                 </div>
                             </div>
 
-                            <div class="bg-white border border-gray-200 rounded-xl shadow-sm">
-                                <div class="border-b border-gray-200 p-4 flex justify-between items-center">
-                                    <h2 class="text-lg font-semibold text-gray-800">اطلاعات تماس</h2>
-                                    <?php if ($selectedCreatedAt): ?>
-                                        <span class="text-sm text-gray-500">تاریخ ثبت: <?php echo htmlspecialchars($selectedCreatedAt, ENT_QUOTES, 'UTF-8'); ?></span>
-                                    <?php endif; ?>
-                                </div>
-                                <div class="p-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
-                                    <div>
-                                        <span class="text-gray-500">نام تامین‌کننده</span>
-                                        <p class="font-medium text-gray-800 mt-1"><?php echo htmlspecialchars($selectedSupplier['name'], ENT_QUOTES, 'UTF-8'); ?></p>
-                                    </div>
-                                    <div>
-                                        <span class="text-gray-500">شماره تماس</span>
-                                        <p class="font-medium text-gray-800 mt-1"><?php echo $selectedSupplier['phone'] ? htmlspecialchars($selectedSupplier['phone'], ENT_QUOTES, 'UTF-8') : 'ثبت نشده'; ?></p>
-                                    </div>
-                                    <div>
-                                        <span class="text-gray-500">ایمیل</span>
-                                        <p class="font-medium text-gray-800 mt-1"><?php echo $selectedSupplier['email'] ? htmlspecialchars($selectedSupplier['email'], ENT_QUOTES, 'UTF-8') : 'ثبت نشده'; ?></p>
-                                    </div>
-                                    <div class="md:col-span-2">
-                                        <span class="text-gray-500">آدرس</span>
-                                        <p class="font-medium text-gray-800 mt-1 leading-relaxed"><?php echo $selectedSupplier['address'] ? nl2br(htmlspecialchars($selectedSupplier['address'], ENT_QUOTES, 'UTF-8')) : 'ثبت نشده'; ?></p>
-                                    </div>
-                                </div>
-                            </div>
 
-                            <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+                            <div class="grid grid-cols-1 xl:grid-cols-1 gap-6">
                                 <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
                                     <div class="border-b border-gray-200 p-4 flex items-center justify-between">
                                         <h3 class="text-lg font-semibold text-gray-800">آخرین فاکتورهای خرید</h3>
