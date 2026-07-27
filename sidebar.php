@@ -22,6 +22,13 @@ $current_page = basename($_SERVER['PHP_SELF'], '.php');
             </li>
 
             <li>
+                <a href="reports.php" class="flex items-center px-4 py-3 <?php echo $current_page === 'reports' ? 'bg-blue-50 text-blue-700 rounded-lg border-r border-blue-500' : 'text-gray-700 rounded-lg hover:bg-gray-100 transition-colors'; ?>">
+                    <i data-feather="bar-chart-2" class="ml-2 w-5 h-5"></i>
+                    <span>گزارش‌ها و آمار</span>
+                </a>
+            </li>
+
+            <li>
                 <a href="sales.php" class="flex items-center px-4 py-3 <?php echo $current_page === 'sales' ? 'bg-blue-50 text-blue-700 rounded-lg border-r border-blue-500' : 'text-gray-700 rounded-lg hover:bg-gray-100 transition-colors'; ?>">
                     <i data-feather="shopping-cart" class="ml-2 w-5 h-5"></i>
                     <span>فروش‌ها</span>
